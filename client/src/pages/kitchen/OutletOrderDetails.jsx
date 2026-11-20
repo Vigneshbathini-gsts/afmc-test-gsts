@@ -4,7 +4,6 @@ import {
   FaSpinner,
   FaTimesCircle,
   FaCheckCircle,
-  FaCamera,
   FaHistory,
   FaCheck,
   FaBan,
@@ -15,6 +14,8 @@ import { useAuth } from "../../context/AuthContext";
 import { barOrdersAPI } from "../../services/api";
 import { Html5Qrcode } from "html5-qrcode";
 import { toInitCap } from "../../utils/textFormat";
+import { formatDisplayDate } from "../../utils/dateUtils";
+import { toast } from "react-toastify";
 
 export default function OutletOrderDetails() {
   const location = useLocation();
@@ -23,10 +24,17 @@ export default function OutletOrderDetails() {
 
   const orderDataFromState = location.state;
   const orderNumberFromQuery = searchParams.get("orderNumber") || "";
-  const kitchenTypeFromQuery = searchParams.get("kitchenType") || "";
+  const kitchenTypeFromQuery =
+    searchParams.get("kitchenType") || searchParams.get("kitchen") || "";
 
   const [orderData, setOrderData] = useState(() => {
     if (orderDataFromState) return orderDataFromState;
+    if (orderNumberFromQuery) {
+      return {
+        ORDERNUMBER: orderNumberFromQuery,
+        kitchenType: kitchenTypeFromQuery || undefined,
+      };
+    }
 
     try {
       const raw = sessionStorage.getItem("outletOrderDetails:lastOrder");
@@ -37,16 +45,51 @@ export default function OutletOrderDetails() {
   });
   const { user } = useAuth();
 
+  // Custom confirmation modal state
+  const [confirmModal, setConfirmModal] = useState({
+    open: false,
+    title: "",
+    text: "",
+    confirmText: "Yes",
+    cancelText: "No",
+  });
+  const confirmResolveRef = useRef(null);
+
+  const closeConfirmModal = (confirmed) => {
+    setConfirmModal((prev) => ({ ...prev, open: false }));
+    if (confirmResolveRef.current) {
+      confirmResolveRef.current(confirmed);
+      confirmResolveRef.current = null;
+    }
+  };
+
+  const confirmAction = (title, text, confirmButtonText = "Yes", cancelButtonText = "No") => {
+    return new Promise((resolve) => {
+      confirmResolveRef.current = resolve;
+      setConfirmModal({
+        open: true,
+        title,
+        text,
+        confirmText: confirmButtonText,
+        cancelText: cancelButtonText,
+      });
+    });
+  };
+
   const department = useMemo(() => {
+    const queryKitchenType = kitchenTypeFromQuery.trim().toLowerCase();
+    if (queryKitchenType === "kitchen") return "Kitchen";
+    if (queryKitchenType === "bar") return "Bar";
+
     if (!user) return "Bar";
     const roleName = user.outletType?.toLowerCase() || "";
     if (roleName.includes("kitchen")) return "Kitchen";
     if (roleName.includes("bar")) return "Bar";
     return "Bar";
-  }, [user]);
+  }, [kitchenTypeFromQuery, user]);
 
   const [items, setItems] = useState([]);
-  const [scannedItems, setScannedItems] = useState([]); // Store scanned items in state only
+  const [scannedItems, setScannedItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [barcode, setBarcode] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -54,7 +97,7 @@ export default function OutletOrderDetails() {
   const [itemName, setItemName] = useState("");
   const [price, setPrice] = useState("");
   const orderedBy = orderData?.FIRST_NAME || "";
-  const [qty, setQty] = useState("");
+  const [qty, setQty] = useState("1");
   const [scanMessage, setScanMessage] = useState("");
   const [scanError, setScanError] = useState("");
   const [cameraError, setCameraError] = useState("");
@@ -73,26 +116,56 @@ export default function OutletOrderDetails() {
   const isMountedRef = useRef(true);
   const isManualScanRef = useRef(false);
   const processingScanRef = useRef(false);
+  const autoStartedScannerRef = useRef(false);
+  const qtyRef = useRef(qty);
+  const barcodeInputRef = useRef(null);
+  const qtyInputRef = useRef(null);
+  const orderDataRef = useRef(orderData);
+  const departmentRef = useRef(department);
+  const activeRecipeParentItemRef = useRef(activeRecipeParentItem);
 
+  useEffect(() => {
+    qtyRef.current = qty;
+  }, [qty]);
 
-  // Fetch order items and scanned items from session
+  useEffect(() => {
+    orderDataRef.current = orderData;
+  }, [orderData]);
+
+  useEffect(() => {
+    departmentRef.current = department;
+  }, [department]);
+
+  useEffect(() => {
+    activeRecipeParentItemRef.current = activeRecipeParentItem;
+  }, [activeRecipeParentItem]);
+
+  const getScanLinePrice = (item) => {
+    const explicitTotal = Number(item?.lineTotalPrice);
+    if (Number.isFinite(explicitTotal)) return explicitTotal.toFixed(2);
+
+    const unitPrice = Number(item?.itemPrice || 0);
+    const scanQuantity = Number(item?.scanQuantity || 0);
+    return (unitPrice * scanQuantity).toFixed(2);
+  };
+
   const fetchOrderItems = useCallback(async () => {
     if (!orderData?.ORDERNUMBER) return;
 
     try {
       setLoading(true);
-      
-      // Fetch order items
+
       const itemsRes = await barOrdersAPI.getOrderItems({
         ORDERNUMBER: orderData.ORDERNUMBER,
         KITCHEN: department,
       });
       const itemsData = itemsRes.data?.data || itemsRes.data || [];
-      
-      // Fetch scanned items from session
+
+      // console.log("Fetched order items:", itemsData);
+
       const scannedRes = await barOrdersAPI.getScannedItems(orderData.ORDERNUMBER);
       const scannedData = scannedRes.data?.data || [];
-      
+
       if (isMountedRef.current) {
         setItems(itemsData);
         setScannedItems(scannedData);
@@ -110,9 +183,6 @@ export default function OutletOrderDetails() {
 
   useEffect(() => {
     isMountedRef.current = true;
-
-    // Persist/restore order data so refresh doesn't lose the context.
-    // Priority: navigation state -> sessionStorage -> query params.
     const nextFromState = orderDataFromState || null;
     if (nextFromState && nextFromState !== orderData) {
       setOrderData(nextFromState);
@@ -122,9 +192,6 @@ export default function OutletOrderDetails() {
         // ignore
       }
     }
-
-    // If we don't have full order data but we do have an order number, at least restore that,
-    // so we can fetch items + scanned history from the backend.
     if (!orderData?.ORDERNUMBER && orderNumberFromQuery) {
       const minimal = {
         ORDERNUMBER: orderNumberFromQuery,
@@ -141,7 +208,6 @@ export default function OutletOrderDetails() {
     if ((orderDataFromState?.ORDERNUMBER || orderData?.ORDERNUMBER || orderNumberFromQuery) && fetchOrderItems) {
       fetchOrderItems();
     }
-
     return () => {
       isMountedRef.current = false;
       if (scannerRef.current) stopScanner();
@@ -154,30 +220,44 @@ export default function OutletOrderDetails() {
     fetchOrderItems,
   ]);
 
-  // NOTE: Do not auto-clear scanned-items on `pagehide` / refresh.
-  // `pagehide` fires on browser-level refresh as well, which would wipe the history the user expects to see.
+  const getScannedQuantityByItemCode = useCallback((item) => {
+    const orderLineId = Number(item.ORDER_LINE_ID ?? item.orderLineId ?? 0);
 
-  // Helper function to get scanned quantity for an item
-  const getScannedQuantityByItemCode = useCallback((itemCode) => {
-    const normalizedItemCode = String(itemCode ?? "").trim();
-    return scannedItems
-      .filter(item => String(item.itemCode ?? "").trim() === normalizedItemCode)
-      .reduce((sum, item) => sum + Number(item.scanQuantity || 0), 0);
+    if (orderLineId > 0) {
+      return scannedItems
+        .filter(si => Number(si.orderLineId ?? 0) === orderLineId)
+        .reduce((sum, si) => sum + Number(si.scanQuantity || 0), 0);
+    }
+    const normalizedItemCode = String(item.ITEM_ID ?? item.item_code ?? item.itemCode ?? "").trim();
+    const unitFactor = Number(item.ingredientsPerUnit || 1);
+    const rawIngredientScans = scannedItems
+      .filter(si => String(si.parentItem ?? si.itemCode ?? "").trim() === normalizedItemCode)
+      .reduce((sum, si) => sum + Number(si.scanQuantity || 0), 0);
+    return Math.floor(rawIngredientScans / unitFactor);
   }, [scannedItems]);
 
-  const handleBarcodeBlur = async () => {
-    if (barcode && barcode.trim() !== "" && !processingScanRef.current && !scanning && isManualScanRef.current) {
-      isManualScanRef.current = false;
-      await autoProcessScan(barcode);
+  const handleBarcodeKeyPress = async (e) => {
+    if (
+      e.key === "Enter" &&
+      e.target.value.trim() &&
+      !processingScanRef.current
+    ) {
+      console.log("Manual Barcode:", e.target.value.trim());
+      e.preventDefault();
+      await autoProcessScan(e.target.value.trim());
     }
-    isManualScanRef.current = false;
   };
 
-  const handleBarcodeKeyPress = async (e) => {
-    if (e.key === "Enter" && barcode && barcode.trim() !== "" && !processingScanRef.current && !scanning) {
+  const handleQtyKeyPress = async (e) => {
+    if (e.key === "Enter") {
       e.preventDefault();
-      isManualScanRef.current = true;
-      await autoProcessScan(barcode);
+      const trimmedBarcode = String(barcode || "").trim();
+      if (trimmedBarcode) {
+        await confirmScan();
+        if (barcodeInputRef.current) barcodeInputRef.current.focus();
+      } else if (barcodeInputRef.current) {
+        barcodeInputRef.current.focus();
+      }
     }
   };
 
@@ -193,91 +273,93 @@ export default function OutletOrderDetails() {
     }
   };
 
- const autoProcessScan = useCallback(async (scannedBarcode) => {
-  if (!scannedBarcode || processingScanRef.current) return;
-  processingScanRef.current = true;
-
-  setProcessingScan(true);
-  setScanError("");
-  setScanMessage("");
-
-  try {
-    const res = await barOrdersAPI.processScan({
-      ORDERNUMBER: orderData?.ORDERNUMBER,
-      BARCODE: scannedBarcode,
-      QUANTITY: qty || 1,
-      KITCHEN: department,
-      PARENT_ITEM: activeRecipeParentItem || "",
-    });
-
-    const scanData = res.data?.data || {};
-
-    // SUCCESS path
-    if (res.data?.success === true) {
-      // Refetch scanned items
-      const scannedRes = await barOrdersAPI.getScannedItems(orderData.ORDERNUMBER);
-      const scannedData = scannedRes.data?.data || [];
-      setScannedItems(scannedData);
-
-      setScanMessage(`✓ ${scanData.itemName || 'Item'} scanned successfully.`);
-      setItemCode(scanData.itemCode || "");
-      setItemName(scanData.itemName || "");
-      setPrice(scanData.calculatedPrice || "");
-
-      // Cocktail modal
-      if (scanData.isCocktailIngredient && Array.isArray(scanData.addedThisScan) && scanData.addedThisScan.length > 0) {
-        const parent = String(scanData.addedThisScan?.[0]?.parentItem || "").trim();
-        if (parent) setActiveRecipeParentItem(parent);
-        setScannedCocktailData({
-          name: scanData.itemName || "Cocktail",
-          ingredients: scanData.addedThisScan.map(ing => ({
-            item_code: ing.itemCode,
-            item_name: ing.itemName,
-            pegs: ing.pegs || 1,
-            quantity: ing.scanQuantity,
-          })),
-        });
-        setShowCocktailModal(true);
-      }
-
-      setTimeout(() => {
-        if (isMountedRef.current) {
-          setBarcode("");
-          setQty("");
-        }
-      }, 800);
-    } 
-    // Backend returned error (400, etc.)
-    else {
-      const message = scanData.message || res.data?.message || "Scan failed";
-      setScanError(message);
-      if (
-        typeof message === "string" &&
-        (message.toLowerCase().includes("morethan order quantity") ||
-          message.toLowerCase().includes("duplicate bottle scan") ||
-          message.toLowerCase().includes("morethen stock"))
-      ) {
-        window.alert(message);
-      }
+  const autoProcessScan = useCallback(async (scannedBarcode) => {
+    if (!scannedBarcode || processingScanRef.current) return;
+    const currentOrderData = orderDataRef.current;
+    const currentDepartment = departmentRef.current;
+    const scanQuantity = Number(qtyRef.current);
+    if (!Number.isInteger(scanQuantity) || scanQuantity <= 0) {
+      toast.error("Enter a valid quantity before confirming the scan.");
+      return;
     }
 
-  } catch (error) {
-    const errMsg = error.response?.data?.error || error.response?.data?.message || error.message || "Failed to process scan.";
-    setScanError(errMsg);
-    console.error("Process Scan Error:", error);
-  } finally {
-    setProcessingScan(false);
-    processingScanRef.current = false;
-    setTimeout(() => {
-      if (isMountedRef.current) {
-        setScanMessage("");
-        setScanError("");
-      }
-    }, 4000);
-  }
-}, [orderData, department, qty, activeRecipeParentItem]);
+    processingScanRef.current = true;
+    setProcessingScan(true);
+    setScanError("");
+    setScanMessage("");
 
-  const startScanner = async () => {
+    try {
+      const res = await barOrdersAPI.processScan({
+        ORDERNUMBER: currentOrderData?.ORDERNUMBER,
+        BARCODE: scannedBarcode,
+        QUANTITY: scanQuantity,
+        KITCHEN: currentDepartment,
+        PARENT_ITEM: activeRecipeParentItemRef.current || "",
+      });
+
+      const scanData = res.data?.data || {};
+
+      if (res.data?.success === true) {
+        const scannedRes = await barOrdersAPI.getScannedItems(currentOrderData.ORDERNUMBER);
+        const scannedData = scannedRes.data?.data || [];
+        setScannedItems(scannedData);
+
+        toast.success(`${scanData.itemName || "Item"} scanned successfully.`, {
+          position: "top-right",
+          autoClose: 3000,
+        });
+        setItemCode(scanData.itemCode || "");
+        setItemName(scanData.itemName || "");
+        setPrice(scanData.calculatedPrice || "");
+
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            setBarcode("");
+            setQty("1");
+          }
+        }, 800);
+      } else {
+        const message = scanData.message || res.data?.message || "Scan failed";
+        setScanError(message);
+        toast.error(message, {
+          position: "top-right",
+          autoClose: 4000,
+        });
+      }
+    } catch (error) {
+      const errMsg = error.response?.data?.error ||
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to process scan.";
+
+      setScanError(errMsg);
+      toast.error(errMsg, {
+        position: "top-right",
+        autoClose: 4000,
+      });
+      console.error("Process Scan Error:", error);
+    } finally {
+      setProcessingScan(false);
+      processingScanRef.current = false;
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          setScanMessage("");
+          setScanError("");
+        }
+      }, 4000);
+    }
+  }, []);
+
+  const confirmScan = useCallback(async () => {
+    const trimmedBarcode = String(barcode || "").trim();
+    if (!trimmedBarcode) {
+      toast.error("Scan or enter a barcode before confirming.");
+      return;
+    }
+    await autoProcessScan(trimmedBarcode);
+  }, [barcode, autoProcessScan]);
+
+  const startScanner = useCallback(async () => {
     try {
       setCameraError("");
       setScanError("");
@@ -289,7 +371,7 @@ export default function OutletOrderDetails() {
     } catch (error) {
       console.error("Error opening scanner:", error);
     }
-  };
+  }, []);
 
   const stopScanner = async () => {
     if (isStoppingRef.current) return;
@@ -351,16 +433,22 @@ export default function OutletOrderDetails() {
             },
           },
           async (decodedText) => {
-            if (hasScannedRef.current || processingScan) return;
+            if (hasScannedRef.current || processingScanRef.current) return;
             hasScannedRef.current = true;
 
+            const scannedBarcode = String(decodedText || "").trim();
             setScanSuccess(true);
-            setBarcode(decodedText);
+            setBarcode(scannedBarcode);
             isManualScanRef.current = false;
-            await autoProcessScan(decodedText);
+            setScanMessage("Barcode captured. Processing scan...");
 
-            setTimeout(() => {
-              if (scannerRef.current) stopScanner();
+            setTimeout(async () => {
+              if (scannerRef.current) await stopScanner();
+              await autoProcessScan(scannedBarcode);
+              if (isMountedRef.current) {
+                hasScannedRef.current = false;
+                startScanner();
+              }
             }, 500);
           }
         );
@@ -372,122 +460,176 @@ export default function OutletOrderDetails() {
     };
 
     initScanner();
-  }, [scanning, autoProcessScan, processingScan]);
+  }, [autoProcessScan, scanning, startScanner]);
 
- const handleItemClick = async (item) => {
-  if (!item.LINK_ENABLED || item.LINK_ENABLED !== "Y") return;
-  try {
-    // Pass both item ID and order number
-    const res = await barOrdersAPI.getCocktailDetailsById(item.ITEM_ID, orderData?.ORDERNUMBER);
-    const cocktail = res.data?.data;
-    const ingredients = Array.isArray(cocktail?.details)
-      ? cocktail.details.map((detail) => ({
+  useEffect(() => {
+    if (!orderData?.ORDERNUMBER || loading || scanning || autoStartedScannerRef.current) return;
+
+    autoStartedScannerRef.current = true;
+    startScanner();
+  }, [loading, orderData?.ORDERNUMBER, scanning, startScanner]);
+
+  const handleItemClick = async (item) => {
+    if (!item.LINK_ENABLED || item.LINK_ENABLED !== "Y") return;
+    try {
+      const res = await barOrdersAPI.getCocktailDetailsById(item.ITEM_ID, orderData?.ORDERNUMBER);
+      const cocktail = res.data?.data;
+      const ingredients = Array.isArray(cocktail?.details)
+        ? cocktail.details.map((detail) => ({
           item_code: detail.ITEM_CODE,
           item_name: detail.ITEM_NAME,
           pegs: detail.PEGS,
           quantity: detail.QUANTITY || 1,
         }))
-      : [];
+        : [];
 
-    if (!ingredients.length) {
-      alert("No recipe details found for this item.");
-      return;
+      if (!ingredients.length) {
+        toast.error("No recipe details found for this item.");
+        return;
+      }
+      setScannedCocktailData({
+        name: cocktail?.ITEM_NAME || item.ITEM_NAME,
+        ingredients,
+      });
+      setActiveRecipeParentItem(String(item.ITEM_ID || "").trim());
+      setShowCocktailModal(true);
+    } catch (error) {
+      console.error("Error fetching cocktail details:", error);
+      toast.error("Failed to load cocktail details.");
     }
-    setScannedCocktailData({
-      name: cocktail?.ITEM_NAME || item.ITEM_NAME,
-      ingredients,
-    });
-    setActiveRecipeParentItem(String(item.ITEM_ID || "").trim());
-    setShowCocktailModal(true);
-  } catch (error) {
-    console.error("Error fetching cocktail details:", error);
-    alert("Failed to load cocktail details.");
-  }
-};
+  };
 
   const handleCancelItem = async (item) => {
     if (item.CAN_CANCEL !== "Y") {
-      alert("This item cannot be cancelled.");
+      toast.error("This item cannot be cancelled.");
       return;
     }
+
+    const confirmed = await confirmAction(
+      "Cancel Item",
+      `Are you sure you want to cancel "${toInitCap(item.ITEM_NAME || "")}"?`,
+      "Yes, Cancel",
+      "No"
+    );
+
+    if (!confirmed) return;
 
     try {
       await barOrdersAPI.cancelItem({ ORDER_LINE_ID: item.ORDER_LINE_ID });
-      alert("Item cancelled successfully.");
+      toast.success("Item cancelled successfully.");
       fetchOrderItems();
     } catch (error) {
       console.error("Error cancelling item:", error);
-      alert("Failed to cancel item. Please try again.");
+      toast.error("Failed to cancel item. Please try again.");
     }
   };
 
-  // Complete order
   const handleCompleteOrder = async () => {
-    const totalOrderedQty = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
-    const totalScannedQty = scannedItems.reduce((sum, item) => sum + Number(item.scanQuantity || 0), 0);
+    const totalRequiredScans = items.reduce(
+      (sum, item) => sum + (Number(item.quantity || 0) * Number(item.ingredientsPerUnit || 1)),
+      0
+    );
 
-    if (totalScannedQty < totalOrderedQty) {
-      alert(`Cannot complete order. Only ${totalScannedQty} of ${totalOrderedQty} items scanned.`);
+    const totalScannedQty = scannedItems.reduce(
+      (sum, item) => sum + Number(item.scanQuantity || 0),
+      0
+    );
+
+    if (totalScannedQty < totalRequiredScans) {
+      toast.error(
+        `Cannot complete order. Only ${totalScannedQty} of ${totalRequiredScans} required scans completed.`
+      );
       return;
     }
 
-    if (window.confirm(`Are you sure you want to complete Order #${orderData.ORDERNUMBER}?`)) {
-      try {
-        setCompleting(true);
-        await barOrdersAPI.updateStatus({
-          ORDERNUMBER: orderData.ORDERNUMBER,
-          KITCHEN: department,
-          STATUS: "Completed",
-        });
-        alert("Order completed successfully!");
-        navigate(-1);
-      } catch (error) {
-        console.error("Error completing order:", error);
-        alert("Failed to complete order. Please try again.");
-      } finally {
-        setCompleting(false);
-      }
+    const confirmed = await confirmAction(
+      "Complete Order",
+      `Are you sure you want to complete Order #${orderData.ORDERNUMBER}?`,
+      "Yes, Complete",
+      "No"
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setCompleting(true);
+      await barOrdersAPI.updateStatus({
+        ORDERNUMBER: orderData.ORDERNUMBER,
+        KITCHEN: department,
+        STATUS: "Completed",
+      });
+
+      await barOrdersAPI.completeOrder({
+        ORDERNUMBER: orderData.ORDERNUMBER,
+        KITCHEN: department,
+        STATUS: "Completed",
+      });
+
+      toast.success("Order completed successfully!");
+      navigate(-1);
+    } catch (error) {
+      console.error("Error completing order:", error);
+      toast.error(
+        error?.response?.data?.message || "Failed to complete order. Please try again."
+      );
+    } finally {
+      setCompleting(false);
     }
   };
 
-  // Cancel entire order
   const handleCancelOrder = async () => {
-    if (window.confirm(`Are you sure you want to cancel Order #${orderData.ORDERNUMBER}? This action cannot be undone.`)) {
-      try {
-        setCancelling(true);
-        for (const item of items) {
-          if (item.CAN_CANCEL === "Y") {
-            await barOrdersAPI.cancelItem({ ORDER_LINE_ID: item.ORDER_LINE_ID });
-          }
-        }
-        alert("Order cancelled successfully!");
-        navigate(-1);
-      } catch (error) {
-        console.error("Error cancelling order:", error);
-        alert("Failed to cancel order. Please try again.");
-      } finally {
-        setCancelling(false);
-      }
+    const confirmed = await confirmAction(
+      "Cancel Order",
+      `Are you sure you want to cancel Order #${orderData.ORDERNUMBER}? This action cannot be undone.`,
+      "Yes, Cancel",
+      "No"
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setCancelling(true);
+      await barOrdersAPI.cancelOrder({
+        ORDERNUMBER: orderData.ORDERNUMBER,
+        KITCHEN: department,
+      });
+      toast.success("Order cancelled successfully!");
+      navigate(-1);
+    } catch (error) {
+      console.error("Error cancelling order:", error);
+      toast.error("Failed to cancel order. Please try again.");
+    } finally {
+      setCancelling(false);
     }
   };
 
-  // Clear all scanned items from session
   const handleClearScannedItems = async () => {
-    if (window.confirm("Are you sure you want to clear all scanned items history?")) {
-      try {
-        await barOrdersAPI.clearScannedItems(orderData.ORDERNUMBER);
-        setScannedItems([]);
-        alert("Scanned items cleared successfully!");
-      } catch (error) {
-        console.error("Error clearing scanned items:", error);
-        alert("Failed to clear scanned items. Please try again.");
-      }
+    const confirmed = await confirmAction(
+      "Clear Scanned Items",
+      "Are you sure you want to clear all scanned items history?",
+      "Yes, Clear",
+      "No"
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await barOrdersAPI.clearScannedItems(orderData.ORDERNUMBER);
+      setScannedItems([]);
+      toast.success("Scanned items cleared successfully!");
+    } catch (error) {
+      console.error("Error clearing scanned items:", error);
+      toast.error("Failed to clear scanned items. Please try again.");
     }
   };
 
-  const totalOrderedQty = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+  const totalRequiredScans = items.reduce(
+    (sum, item) => sum + (Number(item.quantity || 0) * Number(item.ingredientsPerUnit || 1)),
+    0
+  );
   const totalScannedQty = scannedItems.reduce((sum, item) => sum + Number(item.scanQuantity || 0), 0);
-  const isComplete = totalScannedQty >= totalOrderedQty && totalOrderedQty > 0;
+  const isComplete = totalScannedQty >= totalRequiredScans && totalRequiredScans > 0;
+  const totalOrderedUnits = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
 
   if (!orderData) {
     return (
@@ -505,7 +647,7 @@ export default function OutletOrderDetails() {
       <div className="absolute top-16 left-12 w-72 h-72 bg-afmc-maroon/10 rounded-full blur-3xl"></div>
       <div className="absolute bottom-20 right-20 w-80 h-80 bg-afmc-maroon2/10 rounded-full blur-3xl"></div>
 
-      <div className="relative z-10 p-4 md:p-6 space-y-6">
+      <div className="relative z-10 px-0 py-4 md:p-6 space-y-6">
         <style>{`
           #qr-reader video, #qr-reader canvas {
             width: 100% !important;
@@ -528,303 +670,340 @@ export default function OutletOrderDetails() {
           </button>
         </div>
 
-      {/* Header Card with Order Summary */}
-      <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm p-5">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Order Number</label>
-            <div className="text-lg font-semibold text-gray-900">{orderData.ORDERNUMBER}</div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Name</label>
-            <div className="text-gray-800">{orderedBy || orderData.FIRST_NAME || "Naveen Member"}</div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</label>
-            <div className="text-gray-800">
-              {totalOrderedQty} {totalScannedQty > 0 && `(Scanned: ${totalScannedQty})`}
+        {/* Header Card with Order Summary */}
+        <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm p-5">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 tracking-wider">Order Number</label>
+              <div className="text-lg font-semibold text-gray-900">{orderData.ORDERNUMBER}</div>
             </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Status</label>
-            <div className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold ${isComplete ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
-              {isComplete ? "Ready to Complete" : `${totalOrderedQty - totalScannedQty} item(s) remaining`}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 tracking-wider">Name</label>
+              <div className="text-gray-800">{orderedBy || orderData.FIRST_NAME || "Naveen Member"}</div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Two Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Order Items Table */}
-          <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm overflow-hidden">
-            <div className="border-b border-gray-100 px-6 py-4">
-              <h2 className="text-base font-semibold text-gray-800">Order Items</h2>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ordered</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Scanned</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Remaining</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Cancel</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {loading ? (
-                    <tr><td colSpan="6" className="px-6 py-12 text-center text-gray-500">Loading...</td></tr>
-                  ) : items.length === 0 ? (
-                    <tr><td colSpan="6" className="px-6 py-12 text-center text-gray-500">No pending items found.</td></tr>
-                  ) : (
-                    items.map((item, idx) => {
-                      const scannedQty = getScannedQuantityByItemCode(item.ITEM_ID);
-                      const remainingQty = item.quantity - scannedQty;
-                      return (
-                        <tr key={item.ORDER_LINE_ID || idx} className="hover:bg-gray-50">
-                          <td className="px-6 py-4 text-sm text-gray-800">
-                            {item.LINK_ENABLED === "Y" ? (
-                              <button onClick={() => handleItemClick(item)} className="text-pink-600 hover:underline">
-                                {toInitCap(item.ITEM_NAME || "")}
-                              </button>
-                            ) : (
-                              toInitCap(item.ITEM_NAME || "")
-                            )}
-                          </td>
-                          <td className="px-6 py-4 text-sm font-medium">{item.quantity}</td>
-                          <td className="px-6 py-4 text-sm text-green-600 font-medium">{scannedQty}</td>
-                          <td className="px-6 py-4 text-sm text-orange-600 font-medium">{remainingQty}</td>
-                          <td className="px-6 py-4 text-sm text-gray-600">{item.TYPE || "NA"}</td>
-                          <td className="px-6 py-4 text-center">
-                            <button
-                              onClick={() => handleCancelItem(item)}
-                              disabled={item.CAN_CANCEL !== "Y"}
-                              className={`text-lg ${item.CAN_CANCEL === "Y" ? "text-red-400 hover:text-red-600" : "text-gray-300 cursor-not-allowed"}`}
-                            >
-                              <FaTimesCircle />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Barcode Scanner Section */}
-          <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm overflow-hidden">
-            <div className="border-b border-gray-100 px-6 py-4">
-              <h2 className="text-base font-semibold text-gray-800">Scan Barcode</h2>
-            </div>
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Barcode</label>
-                    <input
-                      type="text"
-                      value={barcode}
-                      onChange={(e) => handleBarcodeChange(e.target.value)}
-                      onKeyPress={handleBarcodeKeyPress}
-                      onBlur={handleBarcodeBlur}
-                      placeholder="Scan or enter barcode"
-                      className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:ring-1 focus:ring-pink-500"
-                      disabled={processingScan}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Quantity</label>
-                    <input
-                      type="number"
-                      value={qty}
-                      onChange={(e) => setQty(e.target.value)}
-                      placeholder="1"
-                      className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm"
-                      disabled={processingScan}
-                    />
-                  </div>
-                  <button
-                    onClick={scanning ? stopScanner : startScanner}
-                    disabled={processingScan}
-                    className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg transition text-white font-medium disabled:opacity-50 ${
-                      scanning
-                        ? "bg-gray-700 hover:bg-gray-800"
-                        : "bg-afmc-maroon hover:bg-afmc-maroon2"
-                    }`}
-                  >
-                    <FaCamera /> {scanning ? "Stop Camera" : "Start Camera"}
-                  </button>
-                  {cameraError && <div className="text-sm text-red-600">{cameraError}</div>}
-                  {processingScan && (
-                    <div className="flex items-center gap-2 text-sm text-blue-600">
-                      <FaSpinner className="animate-spin" /> Processing scan...
-                    </div>
-                  )}
-                  {scanMessage && (
-                    <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 p-3 rounded-lg">
-                      <FaCheckCircle /> {scanMessage}
-                    </div>
-                  )}
-                  {scanError && (
-                    <div className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">{scanError}</div>
-                  )}
-                </div>
-                <div>
-                  <div className="rounded-lg border border-gray-200 bg-black p-0 overflow-hidden">
-                    <div className="relative w-full aspect-video min-h-[240px]">
-                      <div id="qr-reader" className="absolute inset-0 w-full h-full" />
-                      {!scanSuccess && scanning && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white text-sm rounded-lg">
-                          Position barcode in frame
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 tracking-wider">Quantity</label>
+              <div className="text-gray-800">
+                {totalOrderedUnits} unit(s) {totalScannedQty > 0 && `(Scans: ${totalScannedQty}/${totalRequiredScans})`}
               </div>
             </div>
-          </div>
-
-          {/* Complete/Cancel Buttons and Scanned Items History */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="border-b border-gray-100 px-6 py-4 flex gap-3">
-              <button
-                onClick={handleCompleteOrder}
-                disabled={completing || !isComplete}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium transition shadow-sm ${isComplete && !completing ? "bg-green-600 text-white hover:bg-green-700" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}
-              >
-                {completing ? <FaSpinner className="animate-spin" /> : <FaCheck />}
-                Complete Order
-              </button>
-              <button
-                onClick={handleCancelOrder}
-                disabled={cancelling}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium bg-red-600 text-white hover:bg-red-700 transition shadow-sm"
-              >
-                {cancelling ? <FaSpinner className="animate-spin" /> : <FaBan />}
-                Cancel Order
-              </button>
-            </div>
-
-            <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between bg-gray-50">
-              <div className="flex items-center gap-2">
-                <FaHistory className="text-gray-400" />
-                <h2 className="text-base font-semibold text-gray-800">Scanned Items History</h2>
-                <span className="text-xs text-gray-500">({scannedItems.length} items scanned)</span>
-              </div>
-              {scannedItems.length > 0 && (
-                <button
-                  onClick={handleClearScannedItems}
-                  className="flex items-center gap-1 px-3 py-1.5 text-xs text-red-600 hover:text-red-700 border border-red-200 rounded-lg hover:bg-red-50 transition"
-                >
-                  <FaTrash className="text-xs" />
-                  Clear All
-                </button>
-              )}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item Code</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item Name</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Qty</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Barcode</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {scannedItems.length === 0 ? (
-                    <tr><td colSpan="6" className="px-4 py-8 text-center text-gray-500">No items scanned yet.</td></tr>
-                  ) : (
-                    scannedItems.map((item) => (
-                      <tr key={item.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm font-mono text-gray-600">{item.itemCode}</td>
-                        <td className="px-4 py-3 text-sm text-gray-800">{toInitCap(item.itemName || "")}</td>
-                        <td className="px-4 py-3 text-sm text-center font-medium">{item.scanQuantity}</td>
-                        <td className="px-4 py-3 text-sm text-gray-500">
-                          {new Date(item.scannedAt).toLocaleTimeString()}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right font-semibold">Rs {item.itemPrice || "0"}</td>
-                        <td className="px-4 py-3 text-sm font-mono text-gray-500">{item.barcode}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column - Scanned Item Details */}
-        <div className="space-y-6">
-          <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm overflow-hidden">
-            <div className="border-b border-gray-100 px-6 py-4">
-              <h2 className="text-base font-semibold text-gray-800">Current Scanned Item</h2>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-xs text-gray-400 uppercase tracking-wider">Item Code</p>
-                <p className="mt-1 font-mono text-lg font-semibold text-gray-800">{itemCode || "-"}</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-xs text-gray-400 uppercase tracking-wider">Item Name</p>
-                <p className="mt-1 font-medium text-gray-800">{itemName ? toInitCap(itemName) : "-"}</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-xs text-gray-400 uppercase tracking-wider">Price</p>
-                <p className="mt-1 font-semibold text-gray-800">{price ? `Rs ${price}` : "-"}</p>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 tracking-wider">Status</label>
+              <div className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold ${isComplete ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
+                {isComplete ? "Ready to Complete" : `${totalRequiredScans - totalScannedQty} scan(s) remaining`}
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Cocktail Recipe Modal */}
-      {showCocktailModal && scannedCocktailData && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-hidden">
-            <div className="border-b px-6 py-4 flex justify-between items-center">
-              <h2 className="text-xl font-semibold">{scannedCocktailData.name}</h2>
-              <button onClick={() => setShowCocktailModal(false)} className="text-2xl">&times;</button>
-            </div>
-            <div className="p-6 overflow-y-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-2 text-left">Item Code</th>
-                    <th className="px-4 py-2 text-left">Item Name</th>
-                    <th className="px-4 py-2 text-center">Pegs</th>
-                    <th className="px-4 py-2 text-center">Qty</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scannedCocktailData.ingredients?.map((ing, idx) => (
-                    <tr key={idx}>
-                      <td className="px-4 py-2">{ing.item_code}</td>
-                      <td className="px-4 py-2">{toInitCap(ing.item_name || "")}</td>
-                      <td className="px-4 py-2 text-center">{ing.pegs || 0}</td>
-                      <td className="px-4 py-2 text-center">{ing.quantity || 1}</td>
+        {/* Two Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Order Items Table */}
+            <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm overflow-hidden">
+              <div className="border-b border-gray-100 px-6 py-4">
+                <h2 className="text-base font-semibold text-gray-800">Order Items</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">Item Name</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">Ordered (Paid + Free)</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">Scanned</th>
+                      {/* <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">Remaining</th> */}
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">Type</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500">Cancel</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="mt-6 flex gap-3">
-                <button onClick={() => setShowCocktailModal(false)} className="flex-1 px-4 py-2 bg-afmc-maroon hover:bg-afmc-maroon2 transition text-white rounded-lg">
-                  Confirm Scan
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {loading ? (
+                      <tr><td colSpan="6" className="px-6 py-12 text-center text-gray-500">Loading...</td></tr>
+                    ) : items.length === 0 ? (
+                      <tr><td colSpan="6" className="px-6 py-12 text-center text-gray-500">No pending items found.</td></tr>
+                    ) : (
+                      items.map((item, idx) => {
+                        const scannedQty = getScannedQuantityByItemCode(item);
+                        return (
+                          <tr key={item.ORDER_LINE_ID || idx} className="hover:bg-gray-50">
+                            <td className="px-6 py-4 text-sm text-gray-800">
+                              {item.LINK_ENABLED === "Y" ? (
+                                <button onClick={() => handleItemClick(item)} className="text-pink-600 hover:underline">
+                                  {toInitCap(item.ITEM_NAME || "")}
+                                </button>
+                              ) : (
+                                toInitCap(item.ITEM_NAME || "")
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-medium">
+                              {item.quantity}
+                              {item.freeQty > 0 && (
+                                <span className="text-xs text-gray-500 ml-1">
+                                  ({item.paidQty}P + {item.freeQty}F)
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-green-600 font-medium">{scannedQty}</td>
+                            {/* <td className="px-6 py-4 text-sm text-orange-600 font-medium">{remainingQty}</td> */}
+                            <td className="px-6 py-4 text-sm text-gray-600">{item.TYPE || "NA"}</td>
+                            <td className="px-6 py-4 text-center">
+                              <button
+                                onClick={() => handleCancelItem(item)}
+                                disabled={item.CAN_CANCEL !== "Y"}
+                                className={`text-lg ${item.CAN_CANCEL === "Y" ? "text-red-400 hover:text-red-600" : "text-gray-300 cursor-not-allowed"}`}
+                              >
+                                <FaTimesCircle />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Barcode Scanner Section */}
+            <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm overflow-hidden">
+              <div className="border-b border-gray-100 px-6 py-4">
+                <h2 className="text-base font-semibold text-gray-800">Scan Barcode</h2>
+              </div>
+              <div className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Barcode</label>
+                      <input
+                        type="text"
+                        value={barcode}
+                        ref={barcodeInputRef}
+                        onChange={(e) => handleBarcodeChange(e.target.value)}
+                        onKeyDown={handleBarcodeKeyPress}
+                        placeholder="Scan or enter barcode"
+                        className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:ring-1 focus:ring-pink-500"
+                        disabled={processingScan}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Quantity</label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={qty}
+                        ref={qtyInputRef}
+                        onChange={(e) => setQty(e.target.value)}
+                        onKeyDown={handleQtyKeyPress}
+                        placeholder="1"
+                        className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm"
+                        disabled={processingScan}
+                      />
+                    </div>
+                    {cameraError && <div className="text-sm text-red-600">{cameraError}</div>}
+                    {processingScan && (
+                      <div className="flex items-center gap-2 text-sm text-blue-600">
+                        <FaSpinner className="animate-spin" /> Processing scan...
+                      </div>
+                    )}
+                    {scanMessage && (
+                      <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 p-3 rounded-lg">
+                        <FaCheckCircle /> {scanMessage}
+                      </div>
+                    )}
+                    {scanError && (
+                      <div className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">{scanError}</div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="rounded-lg border border-gray-200 bg-white p-0 overflow-hidden">
+                      <div className="relative w-full aspect-video min-h-[240px]">
+                        <div id="qr-reader" className="absolute inset-0 w-full h-full" />
+                        {!scanSuccess && scanning && (
+                          <div className="absolute bottom-4 left-0 right-0 text-center text-white text-sm font-medium">
+                            Place barcode inside frame
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Complete/Cancel Buttons and Scanned Items History */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="border-b border-gray-100 px-6 py-4 flex gap-3">
+                <button
+                  onClick={handleCompleteOrder}
+                  disabled={completing || !isComplete}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium transition shadow-sm ${isComplete && !completing ? "bg-green-600 text-white hover:bg-green-700" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}
+                >
+                  {completing ? <FaSpinner className="animate-spin" /> : <FaCheck />}
+                  Complete Order
                 </button>
+                <button
+                  onClick={handleCancelOrder}
+                  disabled={cancelling}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium bg-red-600 text-white hover:bg-red-700 transition shadow-sm"
+                >
+                  {cancelling ? <FaSpinner className="animate-spin" /> : <FaBan />}
+                  Cancel Order
+                </button>
+              </div>
+
+              <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between bg-gray-50">
+                <div className="flex items-center gap-2">
+                  <FaHistory className="text-gray-400" />
+                  <h2 className="text-base font-semibold text-gray-800">Scanned Items History</h2>
+                  <span className="text-xs text-gray-500">({scannedItems.length} items scanned)</span>
+                </div>
+                {scannedItems.length > 0 && (
+                  <button
+                    onClick={handleClearScannedItems}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs text-red-600 hover:text-red-700 border border-red-200 rounded-lg hover:bg-red-50 transition"
+                  >
+                    <FaTrash className="text-xs" />
+                    Clear All
+                  </button>
+                )}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">Item Code</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">Item Name</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">Qty</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">Time</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">Price</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">Barcode</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {scannedItems.length === 0 ? (
+                      <tr><td colSpan="6" className="px-4 py-8 text-center text-gray-500">No items scanned yet.</td></tr>
+                    ) : (
+                      scannedItems.map((item) => (
+                        <tr key={item.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm font-mono text-gray-600">{item.itemCode}</td>
+                          <td className="px-4 py-3 text-sm text-gray-800">{toInitCap(item.itemName || "")}</td>
+                          <td className="px-4 py-3 text-sm text-center font-medium">{item.scanQuantity}</td>
+                          <td className="px-4 py-3 text-sm text-gray-500">
+                            {formatDisplayDate(item.scannedAt)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right font-semibold">Rs {getScanLinePrice(item)}</td>
+                          <td className="px-4 py-3 text-sm font-mono text-gray-500">{item.barcode}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Scanned Item Details */}
+          <div className="space-y-6">
+            <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm overflow-hidden">
+              <div className="border-b border-gray-100 px-6 py-4">
+                <h2 className="text-base font-semibold text-gray-800">Current Scanned Item</h2>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-xs text-gray-400 tracking-wider">Item Code</p>
+                  <p className="mt-1 font-mono text-lg font-semibold text-gray-800">{itemCode || "-"}</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-xs text-gray-400 tracking-wider">Item Name</p>
+                  <p className="mt-1 font-medium text-gray-800">{itemName ? toInitCap(itemName) : "-"}</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-xs text-gray-400 tracking-wider">Price</p>
+                  <p className="mt-1 font-semibold text-gray-800">{price ? `Rs ${price}` : "-"}</p>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      )}
+
+        {/* Cocktail Recipe Modal */}
+        {showCocktailModal && scannedCocktailData && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-hidden">
+              <div className="border-b px-6 py-4 flex justify-between items-center">
+                <h2 className="text-xl font-semibold">{scannedCocktailData.name}</h2>
+                <button onClick={() => setShowCocktailModal(false)} className="text-2xl">&times;</button>
+              </div>
+              <div className="p-6 overflow-y-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Item Code</th>
+                      <th className="px-4 py-2 text-left">Item Name</th>
+                      <th className="px-4 py-2 text-center">Pegs</th>
+                      <th className="px-4 py-2 text-center">Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scannedCocktailData.ingredients?.map((ing, idx) => (
+                      <tr key={idx}>
+                        <td className="px-4 py-2">{ing.item_code}</td>
+                        <td className="px-4 py-2">{toInitCap(ing.item_name || "")}</td>
+                        <td className="px-4 py-2 text-center">{ing.pegs || 0}</td>
+                        <td className="px-4 py-2 text-center">{ing.quantity || 1}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="mt-6 flex gap-3">
+                  <button onClick={() => setShowCocktailModal(false)} className="flex-1 px-4 py-2 bg-afmc-maroon hover:bg-afmc-maroon2 transition text-white rounded-lg">
+                    Confirm Scan
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Custom Confirmation Modal */}
+        {confirmModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl ring-1 ring-black/10">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">{confirmModal.title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{confirmModal.text}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => closeConfirmModal(false)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="mt-6 flex flex-wrap gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => closeConfirmModal(false)}
+                  className="inline-flex justify-center rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  {confirmModal.cancelText}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => closeConfirmModal(true)}
+                  className="inline-flex justify-center rounded-full bg-afmc-maroon px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-afmc-maroon2"
+                >
+                  {confirmModal.confirmText}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

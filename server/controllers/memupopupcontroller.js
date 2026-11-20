@@ -22,6 +22,7 @@ const getMenuPopupDetails = async (req, res) => {
     const data = await memuPopupService.getMenuPopupDetails({
       itemCode,
       itemId,
+      authUser: req.user,
     });
 
     if (!data) {
@@ -36,11 +37,10 @@ const getMenuPopupDetails = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Menu popup fetch error:", error);
+    console.error("Failed to fetch menu popup details");
     return res.status(500).json({
       success: false,
       message: "Server error while fetching menu popup details",
-      error: error.message,
     });
   }
 };

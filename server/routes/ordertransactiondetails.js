@@ -1,5 +1,9 @@
 const express = require("express");
 const db = require("../config/db");
+const {
+  isExcludedLiquorSubcategory,
+  NON_ALCOHOLIC_LIQUOR_SUBCATEGORY_IDS,
+} = require("../helpers/pricingHelper");
 
 const router = express.Router();
 
@@ -7,11 +11,6 @@ const normalizeParam = (value) => {
   if (!value || typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
-};
-
-const normalizeLikeParam = (value) => {
-  const normalized = normalizeParam(value);
-  return normalized ? `%${normalized.toUpperCase()}%` : null;
 };
 
 const normalizeExactParam = (value) => {
@@ -45,47 +44,50 @@ const buildDateValues = (fromDate, toDate) => {
   return [];
 };
 
+const parsePagination = (query) => {
+  const parsedLimit = parseInt(query.limit, 10);
+  const parsedOffset = parseInt(query.offset, 10);
+
+  return {
+    limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20,
+    offset: Number.isFinite(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0,
+  };
+};
+
 const getOrderTransactionDetails = async (req, res) => {
   try {
     const fromDate = normalizeDateParam(req.query.fromDate);
     const toDate = normalizeDateParam(req.query.toDate);
-    const orderNumberLike = normalizeLikeParam(req.query.orderNumber);
+    const orderNumberExact = normalizeParam(req.query.orderNumber);
     const userNameExact = normalizeExactParam(req.query.userName);
     const kitchenNameExact = normalizeExactParam(req.query.kitchenName);
-    const itemNameExact = normalizeExactParam(req.query.itemNames);
 
-    console.log("Received filters:", {
-      fromDate,
-      toDate,
-      orderNumberLike,
-      userNameExact,
-      kitchenNameExact,
-      itemNameExact,
-    });
+    // --- CHANGED: itemNames can now be a comma-separated list of item names ---
+    const itemNamesExact = normalizeMultiParam(req.query.itemNames);
+
+    const { limit, offset } = parsePagination(req.query);
 
     const dateFilterClause = buildDateFilterClause(
-      "OH.ORDER_DATE_NEW",
+      "OH.ORDER_DATE",
       fromDate,
       toDate
     );
 
     const dateValues = buildDateValues(fromDate, toDate);
 
-    // Base WHERE clause with all filters
     let baseWhere = `
       WHERE 
-        TRIM(UPPER(OD.PAYMENT_STATUS)) = 'PAID'
+        XI.CATEGORY_ID IN (10, 14)
+        AND UPPER(IFNULL(OD.ORDER_STATUS, '')) = 'COMPLETED'
         ${dateFilterClause}
     `;
 
-    // Add order number filter if provided
-    if (orderNumberLike) {
-      baseWhere += ` AND CAST(OD.ORDER_ID AS CHAR) LIKE ?`;
+    if (orderNumberExact) {
+      baseWhere += ` AND CAST(OD.ORDER_ID AS CHAR) = ?`;
     } else {
-      baseWhere += ` AND (? IS NULL OR CAST(OD.ORDER_ID AS CHAR) LIKE ?)`;
+      baseWhere += ` AND (? IS NULL OR CAST(OD.ORDER_ID AS CHAR) = ?)`;
     }
 
-    // Add user name filter if provided
     if (userNameExact) {
       baseWhere += ` AND (
         UPPER(TRIM(IFNULL(COALESCE(XNM.FIRST_NAME, XU.FIRST_NAME), ''))) = ?
@@ -100,51 +102,136 @@ const getOrderTransactionDetails = async (req, res) => {
       ))`;
     }
 
-    // Add kitchen name filter if provided
     if (kitchenNameExact) {
       baseWhere += ` AND UPPER(TRIM(IFNULL(XP.PUBMED_NAME, ''))) = ?`;
     } else {
       baseWhere += ` AND (? IS NULL OR UPPER(TRIM(IFNULL(XP.PUBMED_NAME, ''))) = ?)`;
     }
 
-    // Add item name filter if provided
-    if (itemNameExact) {
-      baseWhere += ` AND UPPER(TRIM(IFNULL(XI.ITEM_NAME, ''))) = ?`;
-    } else {
-      baseWhere += ` AND (? IS NULL OR UPPER(TRIM(IFNULL(XI.ITEM_NAME, ''))) = ?)`;
+    // --- CHANGED: itemNames filter now uses IN (...) for multiple values ---
+    if (itemNamesExact.length > 0) {
+      const itemNamePlaceholders = itemNamesExact.map(() => "?").join(", ");
+      baseWhere += ` AND UPPER(TRIM(IFNULL(XI.ITEM_NAME, ''))) IN (${itemNamePlaceholders})`;
     }
+    // when empty, no clause is added -> filter is skipped entirely (same as "All Items")
+
+    const scannedTotalsJoin = `
+      LEFT JOIN (
+        SELECT
+          order_number,
+          inventory_item_code,
+          order_line_id,
+          ROUND(SUM(IFNULL(scan_quantity, 0) * IFNULL(item_price, 0)), 2) AS scanned_subtotal
+        FROM order_scan_collection
+        WHERE collection_name = 'S_COLLECTION'
+        GROUP BY order_number, inventory_item_code, order_line_id
+      ) ST
+        ON ST.order_number = OD.ORDER_ID
+        AND ST.inventory_item_code = OD.ITEM_ID
+        AND (ST.order_line_id = OD.ORDER_LINE_ID OR ST.order_line_id IS NULL)
+    `;
+
+    const customTotalsJoin = `
+      LEFT JOIN (
+        SELECT
+          cm.order_number,
+          cm.inventory_item_code,
+          ROUND(SUM(
+            IFNULL(cm.pegs, 0) *
+            (
+              IFNULL(stock_prices.base_peg_price, 0) * (1 + IFNULL(od_price.profit, 0) / 100) +
+              IFNULL(od_price.food_pr_charges, 0)
+            )
+          ), 2) AS unit_custom_subtotal
+        FROM xxafmc_custom_cocktails_mocktails_details cm
+        JOIN xxafmc_order_details od_price
+          ON od_price.order_id = cm.order_number
+          AND od_price.item_id = cm.inventory_item_code
+        LEFT JOIN (
+          SELECT
+            item_code,
+            MAX(IFNULL(unit_price, 0) / IFNULL(NULLIF(pegs, 0), 1)) AS base_peg_price
+          FROM xxafmc_stock_out
+          WHERE IFNULL(stock_quantity, 0) > 0
+          GROUP BY item_code
+        ) stock_prices
+          ON stock_prices.item_code = cm.item_code
+        GROUP BY cm.order_number, cm.inventory_item_code
+      ) CT
+        ON CT.order_number = OD.ORDER_ID
+        AND CT.inventory_item_code = OD.ITEM_ID
+    `;
+
+    const multiplierExpression = `1`;
+
+    const effectiveProfitExpression = `
+      CASE
+        WHEN XI.CATEGORY_ID = 10 AND XI.SUB_CATEGORY IN (${NON_ALCOHOLIC_LIQUOR_SUBCATEGORY_IDS.join(", ")})
+          THEN 0
+        ELSE IFNULL(OD.PROFIT, 0)
+      END
+    `;
+
+    const ingredientTotalExpression = `
+      CASE
+        WHEN IFNULL(ST.scanned_subtotal, 0) > 0 THEN ST.scanned_subtotal
+        WHEN IFNULL(CT.unit_custom_subtotal, 0) > 0 THEN CT.unit_custom_subtotal * (${multiplierExpression} * IFNULL(OD.QUANTITY, 0))
+        ELSE IFNULL(OD.SUBTOTAL, 0) * (${multiplierExpression})
+      END
+    `;
+
+    const subtotalExpression = `
+      CASE
+        WHEN XI.SUB_CATEGORY IN (14, 15) THEN 
+          ${ingredientTotalExpression} + IFNULL(OD.FOOD_PR_CHARGES, 0)
+        ELSE 
+          ${ingredientTotalExpression} + IFNULL(OD.FOOD_PR_CHARGES * (${multiplierExpression} * IFNULL(OD.QUANTITY, 0)), 0)
+      END
+    `;
+
+    const foodPrChargesExpression = `
+      CASE
+        WHEN XI.SUB_CATEGORY IN (14, 15) THEN IFNULL(OD.FOOD_PR_CHARGES, 0)
+        ELSE IFNULL(OD.FOOD_PR_CHARGES * (${multiplierExpression} * IFNULL(OD.QUANTITY, 0)), 0)
+      END
+    `;
+
+    const quantityExpression = `
+      (${multiplierExpression} * IFNULL(OD.QUANTITY, 0))
+    `;
 
     const detailQuery = `
       SELECT DISTINCT
         OD.ORDER_LINE_ID,
         OD.ORDER_ID,
         OD.ITEM_ID,
-        OD.QUANTITY,
-        ROUND(OD.SUBTOTAL, 2) AS SUBTOTAL,
+        OD.TYPE AS TYPE,
+        ${quantityExpression} AS QUANTITY,
+        ROUND(${subtotalExpression}, 2) AS SUBTOTAL,
         ROUND(
           CASE 
-            WHEN OD.SUBTOTAL <> 0 THEN  
-              (OD.SUBTOTAL - IFNULL(OD.FOOD_PR_CHARGES * OD.QUANTITY, 0)) 
-              / (1 + (IFNULL(OD.PROFIT, 0) / 100)) / OD.QUANTITY
+            WHEN ${subtotalExpression} <> 0 THEN
+              (${subtotalExpression})
+              / (1 + ((${effectiveProfitExpression}) / 100)) / NULLIF(${multiplierExpression} * IFNULL(OD.QUANTITY, 0), 0)
             ELSE 0
           END, 2
         ) AS PRICE,
-        ROUND(IFNULL(OD.FOOD_PR_CHARGES * OD.QUANTITY, 0), 2) AS FOOD_PR_CHARGES,
-        IFNULL(OD.PROFIT * OD.QUANTITY, 0) AS TOTALPROFIT,
+        ROUND(${foodPrChargesExpression}, 2) AS FOOD_PR_CHARGES,
+        (${effectiveProfitExpression}) * (${multiplierExpression} * IFNULL(OD.QUANTITY, 0)) AS TOTALPROFIT,
         ROUND(
-          (IFNULL(OD.PROFIT, 0) / 100) *
-          ((OD.SUBTOTAL - IFNULL(OD.FOOD_PR_CHARGES * OD.QUANTITY, 0)) /
-          (1 + (IFNULL(OD.PROFIT, 0) / 100))), 2
+          ((${effectiveProfitExpression}) / 100) *
+          ((${subtotalExpression}) /
+          (1 + ((${effectiveProfitExpression}) / 100))), 2
         ) AS TOTAL_PROFIT,
         ROUND(
-          ((IFNULL(OD.PROFIT, 0) / 100) *
-          ((OD.SUBTOTAL - IFNULL(OD.FOOD_PR_CHARGES * OD.QUANTITY, 0)) /
-          (1 + (IFNULL(OD.PROFIT, 0) / 100)))) / OD.QUANTITY, 2
+          (((${effectiveProfitExpression}) / 100) *
+          ((${subtotalExpression}) /
+          (1 + ((${effectiveProfitExpression}) / 100)))) / NULLIF(${multiplierExpression} * IFNULL(OD.QUANTITY, 0), 0), 2
         ) AS UNIT_PROFIT,
-        IFNULL(OD.PROFIT, 0) AS TOTALPERCENT,
+        (${effectiveProfitExpression}) AS TOTALPERCENT,
         OH.ORDER_NUM,
         OH.USER_ID,
-        OH.ORDER_DATE_NEW AS O_DATE,
+        OH.ORDER_DATE AS O_DATE,
         OH.ORDER_TOTAL,
         CONCAT(UCASE(LEFT(XI.ITEM_NAME,1)), LCASE(SUBSTRING(XI.ITEM_NAME,2))) AS ITEM_NAME,
         COALESCE(XNM.FIRST_NAME, XU.FIRST_NAME) AS FIRST_NAME,
@@ -152,11 +239,15 @@ const getOrderTransactionDetails = async (req, res) => {
         1 AS ORD
       FROM xxafmc_order_details OD
       JOIN xxafmc_order_header OH ON OD.ORDER_ID = OH.ORDER_NUM
-      LEFT JOIN xxafmc_inventory XI ON XI.ITEM_CODE = OD.ITEM_ID
+      JOIN xxafmc_inventory XI ON XI.ITEM_CODE = OD.ITEM_ID
       LEFT JOIN xxafmc_users XU ON OH.USER_ID = XU.USER_ID
       LEFT JOIN xxafmc_pubmed XP ON XP.PUBMED_ID = OH.PUBMED
       LEFT JOIN xxafmc_non_members XNM ON XNM.ID = OH.MEMBER_ID
+      ${scannedTotalsJoin}
+      ${customTotalsJoin}
       ${baseWhere}
+      ORDER BY OH.ORDER_NUM DESC, OD.ORDER_LINE_ID DESC
+      LIMIT ${limit} OFFSET ${offset}
     `;
 
     const summaryQuery = `
@@ -164,15 +255,16 @@ const getOrderTransactionDetails = async (req, res) => {
         NULL AS ORDER_LINE_ID,
         NULL AS ORDER_ID,
         NULL AS ITEM_ID,
+        NULL AS TYPE,
         'Total' AS QUANTITY,
-        ROUND(SUM(OD.SUBTOTAL),2) AS SUBTOTAL,
+        ROUND(SUM(${subtotalExpression}),2) AS SUBTOTAL,
         NULL AS PRICE,
-        ROUND(SUM(IFNULL(OD.FOOD_PR_CHARGES * OD.QUANTITY,0)),2) AS FOOD_PR_CHARGES,
-        SUM(IFNULL(OD.PROFIT * OD.QUANTITY,0)) AS TOTALPROFIT,
+        ROUND(SUM(${foodPrChargesExpression}),2) AS FOOD_PR_CHARGES,
+        SUM((${effectiveProfitExpression}) * (${multiplierExpression} * IFNULL(OD.QUANTITY, 0))) AS TOTALPROFIT,
         ROUND(SUM(
-          (IFNULL(OD.PROFIT, 0) / 100) *
-          ((OD.SUBTOTAL - IFNULL(OD.FOOD_PR_CHARGES * OD.QUANTITY, 0)) /
-          (1 + (IFNULL(OD.PROFIT, 0) / 100)))
+          ((${effectiveProfitExpression}) / 100) *
+          ((${subtotalExpression}) /
+          (1 + ((${effectiveProfitExpression}) / 100)))
         ),2) AS TOTAL_PROFIT,
         NULL AS UNIT_PROFIT,
         NULL AS TOTALPERCENT,
@@ -186,81 +278,82 @@ const getOrderTransactionDetails = async (req, res) => {
         2 AS ORD
       FROM xxafmc_order_details OD
       JOIN xxafmc_order_header OH ON OD.ORDER_ID = OH.ORDER_NUM
-      LEFT JOIN xxafmc_inventory XI ON XI.ITEM_CODE = OD.ITEM_ID
+      JOIN xxafmc_inventory XI ON XI.ITEM_CODE = OD.ITEM_ID
       LEFT JOIN xxafmc_users XU ON OH.USER_ID = XU.USER_ID
       LEFT JOIN xxafmc_pubmed XP ON XP.PUBMED_ID = OH.PUBMED
       LEFT JOIN xxafmc_non_members XNM ON XNM.ID = OH.MEMBER_ID
+      ${scannedTotalsJoin}
+      ${customTotalsJoin}
       ${baseWhere}
     `;
 
     const finalQuery = `
       SELECT * FROM (
-        ${detailQuery}
+        (${detailQuery})
         UNION ALL
-        ${summaryQuery}
+        (${summaryQuery})
       ) final
       ORDER BY ORD ASC, ORDER_NUM DESC
     `;
 
-    // Build parameters array based on which filters are provided
+    // --- CHANGED: params building for itemNames IN(...); no placeholders pushed when list is empty ---
     const params = [];
-
-    // Add date parameters
     params.push(...dateValues);
 
-    // Add order number parameters (2 params for LIKE pattern)
-    if (orderNumberLike) {
-      params.push(orderNumberLike);
+    if (orderNumberExact) {
+      params.push(orderNumberExact);
     } else {
       params.push(null, null);
     }
 
-    // Add user name parameters (3 params for different name combinations)
     if (userNameExact) {
       params.push(userNameExact, userNameExact, userNameExact);
     } else {
       params.push(null, null, null, null);
     }
 
-    // Add kitchen name parameters (1 param for exact match)
     if (kitchenNameExact) {
       params.push(kitchenNameExact);
     } else {
       params.push(null, null);
     }
 
-    // Add item name parameters (1 param for exact match)
-    if (itemNameExact) {
-      params.push(itemNameExact);
-    } else {
-      params.push(null, null);
+    if (itemNamesExact.length > 0) {
+      params.push(...itemNamesExact);
     }
+    // when empty, no params needed since the clause itself was omitted above
 
-    // Duplicate params for the summary query (since it has the same WHERE clause)
+    // baseWhere is used twice (detailQuery + summaryQuery) inside finalQuery, so params must be duplicated
     const allParams = [...params, ...params];
 
-    console.log("Query parameters count:", allParams.length);
-    console.log("Query parameters:", allParams);
-
     const [results] = await db.execute(finalQuery, allParams);
-
-    console.log(`Found ${results.length} records`);
-
+    // console.log("Fetched order transaction rows:", results); // Debugging log
     return res.json({
       success: true,
       count: results.length,
       data: results,
     });
   } catch (error) {
-    console.error("Order Transaction Error:", error);
+    console.error("Failed to fetch order transactions");
     return res.status(500).json({
       success: false,
       message: "Error fetching order transactions",
-      error: error.message,
     });
   }
 };
 
+
+function normalizeMultiParam(raw) {
+  if (raw === undefined || raw === null) return [];
+
+  const values = Array.isArray(raw) ? raw : String(raw).split(",");
+
+  const cleaned = values
+    .map((v) => String(v).trim().toUpperCase())
+    .filter((v) => v.length > 0);
+
+  return Array.from(new Set(cleaned));
+}
 const mapApexOptions = (rows) => {
   const seen = new Set();
   return rows
@@ -287,11 +380,10 @@ const sendOptionResponse = async (res, query, errorLabel) => {
       data: mapApexOptions(rows),
     });
   } catch (error) {
-    console.error(`${errorLabel} Error:`, error);
+    console.error(`Failed to fetch ${errorLabel.toLowerCase()}`);
     return res.status(500).json({
       success: false,
       message: `Error fetching ${errorLabel.toLowerCase()}`,
-      error: error.message,
     });
   }
 };
@@ -341,4 +433,3 @@ router.get("/ordertransaction/items", getOrderTransactionItemOptions);
 router.get("/order-transaction/items", getOrderTransactionItemOptions);
 
 module.exports = router;
-

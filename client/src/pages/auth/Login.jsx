@@ -16,6 +16,7 @@ import { useLocation } from "react-router-dom";
 import { useRef } from "react";
 import { authAPI } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
+import { storeAuthData, storeRememberedEmail, getRememberedEmail, getRememberMePreference } from "../../utils/authStorage";
 import logo from "../../assets/AFMC_Logo.png";
 
 const AFMCLogo = logo;
@@ -45,7 +46,7 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(false);
   const [touched, setTouched] = useState({ email: false, password: false });
   const [isCheckingRole, setIsCheckingRole] = useState(false);
-  const { user, isLoading, setUser } = useAuth();
+  const { isLoading, setUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const sessionAlertShownRef = useRef(false);
@@ -66,36 +67,13 @@ export default function Login() {
 
   // Load saved credentials
   useEffect(() => {
-    const savedEmail = localStorage.getItem("afmc_remembered_email");
-    const savedRemember = localStorage.getItem("afmc_remember_me") === "true";
+    const savedEmail = getRememberedEmail();
+    const savedRemember = getRememberMePreference();
     if (savedEmail && savedRemember) {
       setEmail(savedEmail);
       setRememberMe(true);
     }
   }, []);
-
-  useEffect(() => {
-    if (!isLoading && user) {
-      navigate(getRedirectPath(user), { replace: true });
-    }
-  }, [user, isLoading, navigate]);
-
-  const getRedirectPath = (user) => {
-    const normalizedLoginType = String(user?.loginType || "").trim().toUpperCase();
-    const isNonMember = normalizedLoginType === "NON MEMBER";
-
-    switch (Number(user?.roleId)) {
-      case 10: return "/admin/dashboard";
-      case 20: return "/user/dashboard";
-      case 30: return isNonMember ? "/user/dashboard" : "/attendant/register-member";
-      case 40:
-        if (user.outletType === "KITCHEN") return "/kitchen/dashboard";
-        if (user.outletType === "BAR") return "/bar/dashboard";
-        return "/kitchen/dashboard";
-      case 50: return "/storekeeper/dashboard";
-      default: return "/unauthorized";
-    }
-  };
 
   const fetchUserRole = useCallback(async () => {
     if (!email.trim() || !validateUsername(email.trim())) {
@@ -156,36 +134,56 @@ export default function Login() {
         password,
         outletType,
       });
+      
       if (response.data?.success) {
-        // Handle remember me
-        if (rememberMe) {
-          localStorage.setItem("afmc_remembered_email", email.trim());
-          localStorage.setItem("afmc_remember_me", "true");
-        } else {
-          localStorage.removeItem("afmc_remembered_email");
-          localStorage.setItem("afmc_remember_me", "false");
+        if (!response.data?.token) {
+          setError("Login failed because the server did not return an authentication token.");
+          return;
         }
 
-        localStorage.setItem("token", response.data.token);
+        // Handle remember me - store email and token
+        if (rememberMe) {
+          storeRememberedEmail(email.trim());
+        } else {
+          storeRememberedEmail(null);
+        }
+
+        // Store token and user data in localStorage
+        storeAuthData(response.data.user, response.data.token, rememberMe);
+
+        // Update auth context with user data
         setUser(response.data.user);
-        
-        setTimeout(() => {
-          navigate(response.data.redirectPath);
-        }, 100);
+
+        navigate(response.data.redirectPath, {
+          replace: true,
+          state: { destinationPath: response.data.destinationPath },
+        });
         return;
       }
       setError(response.data?.message || "Login failed");
     } catch (err) {
       console.error("Login error:", err);
-      setError(
-        err.response?.data?.message ||
-        err.response?.data?.error ||
-        "Login failed. Please check your credentials."
-      );
+
+      //  NETWORK ERROR FILTER CHAIN
+      if (err.message === "NETWORK_DISCONNECTED") {
+        setError(" Device is offline. Please check your internet connection.");
+      } else if (err.message === "NETWORK_TIMEOUT") {
+        setError(" Connection timed out. The server is taking too long to respond.");
+      } else if (err.code === "ERR_NETWORK" || !err.response) {
+        setError(" Network connection error. Unable to reach the authentication server.");
+      } else {
+        // Fallback to checking credential records only if the server sent an explicit response
+        setError(
+          err.response?.data?.message ||
+          err.response?.data?.error ||
+          "Login failed. Please check your credentials."
+        );
+      }
     } finally {
       setLoading(false);
     }
   };
+
 
   const getEmailError = () => {
     if (!touched.email) return "";
@@ -286,7 +284,7 @@ export default function Login() {
         {/* Bottom motto */}
         <div style={styles.motto}>
           <span style={styles.mottoText}>सर्वे सन्तु निरामयाः</span>
-          
+
         </div>
       </div>
 
@@ -575,9 +573,9 @@ function OutletCard({ icon, label, value, selected, onClick }) {
 }
 
 /* Styles */
-const MAROON   = "#6B1A4F";
-const MAROON2  = "#7B2252";
-const GOLD     = "#DAA520";
+const MAROON = "#6B1A4F";
+const MAROON2 = "#7B2252";
+const GOLD = "#DAA520";
 const GOLD_DIM = "rgba(218,165,32,0.65)";
 
 const styles = {
@@ -669,15 +667,15 @@ const styles = {
     background: `radial-gradient(circle, rgba(218,165,32,0.18) 0%, transparent 70%)`,
     animation: "crestPulse 4s ease-in-out infinite",
   },
- crestImg: {
-  position: "absolute",   // ✅ force perfect centering
-  top: "50%",
-  left: "50%",
-  transform: "translate(-50%, -50%)", // ✅ true center
-  width: "70%",           // adjust visually (try 65–75%)
-  height: "70%",
-  objectFit: "contain",
-},
+  crestImg: {
+    position: "absolute",   // ✅ force perfect centering
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)", // ✅ true center
+    width: "70%",           // adjust visually (try 65–75%)
+    height: "70%",
+    objectFit: "contain",
+  },
   crestFallback: { alignItems: "center", justifyContent: "center" },
   orgName: {
     fontFamily: "'Cinzel', serif",
@@ -995,5 +993,5 @@ const styles = {
     marginTop: 16,
     letterSpacing: "0.05em",
   },
-  
+
 };

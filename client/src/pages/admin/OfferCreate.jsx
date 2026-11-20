@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   FaArrowLeft,
@@ -9,8 +9,10 @@ import {
   FaCalendarAlt,
   FaCommentDots,
   FaSortAmountUp,
+  FaSearch,
   FaChevronDown,
 } from "react-icons/fa";
+import { toast } from "react-toastify";
 import { offersAPI } from "../../services/api";
 
 const toInitCap = (str) => {
@@ -33,14 +35,7 @@ export default function OfferCreate() {
     return `${year}-${month}-${day}`;
   };
 
-  // Helper function to get today's date in YYYY-MM-DD format
-  // const getTodayDate = () => {
-  //   const today = new Date();
-  //   const year = today.getFullYear();
-  //   const month = String(today.getMonth() + 1).padStart(2, '0');
-  //   const day = String(today.getDate()).padStart(2, '0');
-  //   return `${year}-${month}-${day}`;
-  // };
+
 
   const [formData, setFormData] = useState({
     itemCode: "",
@@ -50,12 +45,15 @@ export default function OfferCreate() {
     freeItemName: "",
     freeItemQuantity: "",
     offerDate: getTodayDate(), // Set default to today's date
+    endDate: "",
     message: "",
   });
 
   const [items, setItems] = useState([]);
   const [showItemDropdown, setShowItemDropdown] = useState(false);
   const [showFreeItemDropdown, setShowFreeItemDropdown] = useState(false);
+  const [itemSearch, setItemSearch] = useState("");
+  const [freeItemSearch, setFreeItemSearch] = useState("");
   const [loadingItems, setLoadingItems] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -113,6 +111,20 @@ export default function OfferCreate() {
     };
   }, []);
 
+  const filteredItems = useMemo(() => {
+    return items.filter((item) =>
+      item.item_name.toLowerCase().includes(itemSearch.toLowerCase()) ||
+      item.item_code.toString().includes(itemSearch)
+    );
+  }, [items, itemSearch]);
+
+  const filteredFreeItems = useMemo(() => {
+    return items.filter((item) =>
+      item.item_name.toLowerCase().includes(freeItemSearch.toLowerCase()) ||
+      item.item_code.toString().includes(freeItemSearch)
+    );
+  }, [items, freeItemSearch]);
+
   // Handle Input Change
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -132,6 +144,7 @@ export default function OfferCreate() {
       itemName: item.item_name, //   
     }));
     setShowItemDropdown(false);
+    setItemSearch("");
   };
 
   // Select Free Item from Dropdown
@@ -142,6 +155,7 @@ export default function OfferCreate() {
       freeItemName: item.item_name, //   
     }));
     setShowFreeItemDropdown(false);
+    setFreeItemSearch("");
   };
 
   // Save Offer
@@ -153,27 +167,51 @@ export default function OfferCreate() {
 
       // Validations
       if (!formData.itemCode) {
-        setError("Please select Item Name");
+        const message = "Please select Item Name";
+        setError(message);
+        toast.error(message);
         return;
       }
 
       if (!formData.offerQuantity || Number(formData.offerQuantity) <= 0) {
-        setError("Please enter valid Item Quantity");
+        const message = "Please enter valid Item Quantity";
+        setError(message);
+        toast.error(message);
         return;
       }
 
       if (!formData.freeItemCode) {
-        setError("Please select Free Item Name");
+        const message = "Please select Free Item Name";
+        setError(message);
+        toast.error(message);
         return;
       }
 
       if (!formData.freeItemQuantity || Number(formData.freeItemQuantity) <= 0) {
-        setError("Please enter valid Free Item Quantity");
+        const message = "Please enter valid Free Item Quantity";
+        setError(message);
+        toast.error(message);
         return;
       }
 
       if (!formData.offerDate) {
-        setError("Please select Start Date");
+        const message = "Please select Start Date";
+        setError(message);
+        toast.error(message);
+        return;
+      }
+
+      if (!formData.endDate) {
+        const message = "Please select End Date";
+        setError(message);
+        toast.error(message);
+        return;
+      }
+
+      if (formData.offerDate && formData.endDate < formData.offerDate) {
+        const message = "End Date cannot be earlier than Start Date";
+        setError(message);
+        toast.error(message);
         return;
       }
 
@@ -184,15 +222,17 @@ export default function OfferCreate() {
         free_item_code: formData.freeItemCode,
         free_item_quantity: parseInt(formData.freeItemQuantity, 10),
         offer_date: formData.offerDate,
+        end_date: formData.endDate,
         message: formData.message || "",
       };
 
-      console.log("Sending payload:", payload);
+      // console.log("Sending payload:", payload);
 
-      const response = await offersAPI.createOffer(payload);
-      console.log("Response:", response.data);
+      await offersAPI.createOffer(payload);
+      // console.log("Response:", response?.data);
 
       setSuccessMessage("Offer created successfully!");
+      toast.success("Offer created successfully!");
 
       setTimeout(() => {
         navigate("/admin/offers");
@@ -200,17 +240,19 @@ export default function OfferCreate() {
     } catch (err) {
       console.error("Create Offer Error:", err);
       console.error("Error response:", err.response?.data);
-      setError(err.response?.data?.message || "Failed to create offer");
+      const message = err.response?.data?.message || "Failed to create offer";
+      setError(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleBack = () => navigate(-1);
+  const handleBack = () => navigate("/admin/offers");
   const handleDashboard = () => navigate("/admin/dashboard");
 
 return (
-  <div className="min-h-screen bg-gradient-to-br from-afmc-bg via-white to-afmc-bg2 relative p-4 md:p-5">
+  <div className="min-h-screen bg-gradient-to-br from-afmc-bg via-white to-afmc-bg2 relative px-0 py-4 md:p-5">
     {/* Background Blobs */}
     <div className="absolute top-20 left-20 w-72 h-72 bg-afmc-maroon/10 rounded-full blur-3xl"></div>
     <div className="absolute bottom-20 right-20 w-80 h-80 bg-afmc-maroon2/10 rounded-full blur-3xl"></div>
@@ -241,10 +283,10 @@ return (
 
           <button
             onClick={handleDashboard}
-            className="px-4 py-2 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-semibold shadow-sm transition flex items-center gap-2 text-sm"
+            className="self-end sm:self-auto inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition max-w-max text-sm"
           >
             <FaHome />
-            Dashboard
+            Go To Dashboard
           </button>
         </div>
       </div>
@@ -287,12 +329,25 @@ return (
 
               {showItemDropdown && (
                 <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-2xl shadow-xl max-h-64 overflow-y-auto">
+                  <div className="p-2 sticky top-0 bg-white border-b border-gray-100 z-10">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-xl border border-gray-200 focus-within:ring-2 focus-within:ring-afmc-maroon/20">
+                      <FaSearch className="text-gray-400 text-sm" />
+                      <input
+                        type="text"
+                        placeholder="Search items..."
+                        className="w-full bg-transparent outline-none text-sm text-gray-700"
+                        value={itemSearch}
+                        onChange={(e) => setItemSearch(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                  </div>
                   {loadingItems ? (
                     <div className="px-4 py-3 text-sm text-gray-500">Loading items...</div>
-                  ) : items.length === 0 ? (
+                  ) : filteredItems.length === 0 ? (
                     <div className="px-4 py-3 text-sm text-gray-500">No items found</div>
                   ) : (
-                    items.map((item) => (
+                    filteredItems.map((item) => (
                       <button
                         key={item.item_code}
                         type="button"
@@ -315,13 +370,15 @@ return (
             <div className="flex items-center rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
               <FaSortAmountUp className="text-gray-400 mr-2" />
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 name="offerQuantity"
                 value={formData.offerQuantity}
                 onChange={handleChange}
                 placeholder="Enter item quantity"
                 className="w-full outline-none text-gray-700 bg-transparent text-sm"
                 min="1"
+                maxLength={10}
               />
             </div>
           </div>
@@ -351,12 +408,25 @@ return (
 
             {showFreeItemDropdown && (
               <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-56 overflow-y-auto">
+                <div className="p-2 sticky top-0 bg-white border-b border-gray-100 z-10">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-xl border border-gray-200 focus-within:ring-2 focus-within:ring-afmc-maroon/20">
+                    <FaSearch className="text-gray-400 text-sm" />
+                    <input
+                      type="text"
+                      placeholder="Search items..."
+                      className="w-full bg-transparent outline-none text-sm text-gray-700"
+                      value={freeItemSearch}
+                      onChange={(e) => setFreeItemSearch(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </div>
                 {loadingItems ? (
                   <div className="px-3 py-2 text-xs text-gray-500">Loading items...</div>
-                ) : items.length === 0 ? (
+                ) : filteredFreeItems.length === 0 ? (
                   <div className="px-3 py-2 text-xs text-gray-500">No items found</div>
                 ) : (
-                  items.map((item) => (
+                  filteredFreeItems.map((item) => (
                     <button
                       key={item.item_code}
                       type="button"
@@ -379,13 +449,15 @@ return (
             <div className="flex items-center rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
               <FaSortAmountUp className="text-gray-400 mr-2" />
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 name="freeItemQuantity"
                 value={formData.freeItemQuantity}
                 onChange={handleChange}
                 placeholder="Enter free item quantity"
                 className="w-full outline-none text-gray-700 bg-transparent text-sm"
                 min="1"
+                maxLength={10}
               />
             </div>
           </div>
@@ -409,6 +481,24 @@ return (
               />
             </div>
           </div>
+
+          {/* End Date */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              End Date <span className="text-red-500">*</span>
+            </label>
+            <div className="flex items-center rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
+              <FaCalendarAlt className="text-gray-400 mr-2" />
+              <input
+                type="date"
+                name="endDate"
+                value={formData.endDate}
+                onChange={handleChange}
+                min={formData.offerDate || undefined}
+                className="w-full outline-none text-gray-700 bg-transparent text-sm"
+              />
+            </div>
+          </div>
         </div>
 
         {/* Message */}
@@ -423,6 +513,7 @@ return (
               value={formData.message}
               onChange={handleChange}
               rows={3}
+              maxLength={100}
               placeholder="Enter offer message (optional)..."
               className="w-full outline-none text-gray-700 bg-transparent resize-none text-sm"
             />

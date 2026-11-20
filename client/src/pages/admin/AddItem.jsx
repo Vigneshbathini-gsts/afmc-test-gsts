@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
+import { toast } from "react-toastify";
 import {
   FaArrowLeft,
   FaBarcode,
@@ -32,12 +33,6 @@ export default function AddItem() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const pendingBarcodesRef = useRef(new Set());
 
-  const formatQuantity = (value) => {
-    const numericValue = Number(value || 0);
-    if (!Number.isFinite(numericValue)) return "0";
-    return Number.isInteger(numericValue) ? String(numericValue) : numericValue.toFixed(2);
-  };
-
   const createdBy = useMemo(() => {
     try {
       const rawUser = localStorage.getItem("user");
@@ -53,12 +48,16 @@ export default function AddItem() {
     async (barcodeValue) => {
       const normalizedBarcode = String(barcodeValue || "").trim();
       if (!normalizedBarcode) {
-        setError("Barcode is required.");
+        const validationMessage = "Barcode is required.";
+        setError(validationMessage);
+        toast.error(validationMessage);
         return;
       }
 
       if (!transactionDate) {
-        setError("Transaction date is required.");
+        const validationMessage = "Transaction date is required.";
+        setError(validationMessage);
+        toast.error(validationMessage);
         return;
       }
 
@@ -66,7 +65,9 @@ export default function AddItem() {
         rows.some((row) => String(row.barcode) === normalizedBarcode) ||
         pendingBarcodesRef.current.has(normalizedBarcode)
       ) {
-        setError("This barcode is already added.");
+        const validationMessage = "This barcode is already added.";
+        setError(validationMessage);
+        toast.error(validationMessage);
         return;
       }
 
@@ -76,35 +77,50 @@ export default function AddItem() {
       setSuccessMessage("");
       try {
         const response = await inventoryAPI.getStockOutItemByBarcode(normalizedBarcode);
+
         const item = response.data.data;
+        console.log("item", item);
+        const availableStock = Number(item.available_stock || 0);
+        if (availableStock <= 0) {
+          const validationMessage = `Scanned barcode ${normalizedBarcode} has no stock.`;
+          setError(validationMessage);
+          toast.error(validationMessage);
+          return;
+        }
 
         setRows((current) => {
           if (current.some((row) => String(row.barcode) === normalizedBarcode)) {
             return current;
           }
 
-          return [
-            ...current,
-            {
-              itemCode: item.item_code,
-              itemName: item.item_name,
-              quantity: 1,
-              unitPrice: Number(item.unit_price || 0),
-              transactionDate,
-              barcode: normalizedBarcode,
-              volume: item.volume || "",
-              batchName: item.batch_name || "",
-              acUnit: item.ac_unit || "Nos",
-              pegs: Number(item.pegs || 0),
-              availableStock: Number(item.available_stock || 0),
-              availableQuantity: Number(item.available_quantity || 0),
-            },
-          ];
+          const barcodeQty = Number(item.barcode_qty || 0);
+
+return [
+  ...current,
+  {
+    itemCode: item.item_code,
+    itemName: item.item_name,
+    pages: barcodeQty,
+    displayPages: barcodeQty,
+    unitPrice: Number(item.unit_price || 0),
+    transactionDate,
+    barcode: normalizedBarcode,
+    volume: item.volume || "",
+    batchName: item.batch_name || "",
+    acUnit: item.ac_unit || "Nos",
+    pegs: Number(item.pegs || 0),
+    availableStock,
+  },
+];
         });
         setBarcode("");
+        toast.success(`Added barcode ${normalizedBarcode} successfully.`);
       } catch (requestError) {
+        const requestErrorMessage =
+          requestError.response?.data?.message || "Unable to fetch item for barcode.";
         console.error("Failed to fetch barcode item:", requestError);
-        setError(requestError.response?.data?.message || "Unable to fetch item for barcode.");
+        setError(requestErrorMessage);
+        toast.error(requestErrorMessage);
       } finally {
         pendingBarcodesRef.current.delete(normalizedBarcode);
         setLoading(false);
@@ -137,6 +153,7 @@ export default function AddItem() {
 
   const handleDeleteRow = (index) => {
     setRows((current) => current.filter((_, rowIndex) => rowIndex !== index));
+    toast.success("Item removed successfully.");
   };
 
   const handleCancel = () => {
@@ -144,20 +161,23 @@ export default function AddItem() {
     setBarcode("");
     setError("");
     setSuccessMessage("");
+    navigate("/admin/dashboard");
   };
 
   const handleFinish = async () => {
-    const invalidRow = rows.find((row) => !row.quantity || Number(row.quantity) <= 0);
+    const invalidRow = rows.find((row) => !row.pages || Number(row.pages) <= 0);
     if (invalidRow) {
-      setError("Every row must have a quantity greater than 0.");
+      const validationMessage = "Every row must have pages greater than 0.";
+      setError(validationMessage);
+      toast.error(validationMessage);
       return;
     }
 
-    const overdrawnRow = rows.find(
-      (row) => Number(row.quantity) > Number(row.availableQuantity || 0)
-    );
+    const overdrawnRow = rows.find((row) => Number(row.pages) > Number(row.availableStock || 0));
     if (overdrawnRow) {
-      setError(`Quantity exceeds available stock for barcode ${overdrawnRow.barcode}.`);
+      const validationMessage = `Pages exceed available stock for barcode ${overdrawnRow.barcode}.`;
+      setError(validationMessage);
+      toast.error(validationMessage);
       return;
     }
 
@@ -165,23 +185,37 @@ export default function AddItem() {
     setError("");
     setSuccessMessage("");
     try {
+      console.log("inventoryAPI",inventoryAPI)
+      console.log(
+  rows.map((row) => ({
+    barcode: row.barcode,
+    quantity: Number(row.pages ?? row.displayPages ?? row.pegs ?? 1),
+    transactionDate,
+    createdBy,
+  }))
+);
       await inventoryAPI.createStockOut({
-        items: rows.map((row) => ({
-          barcode: row.barcode,
-          quantity: Number(row.quantity),
-          transactionDate,
-          createdBy,
-        })),
+       items: rows.map((row) => ({
+    barcode: row.barcode,
+    quantity: Number(row.pages ?? row.displayPages ?? row.pegs ?? 1),
+    transactionDate,
+    createdBy,
+})),
       });
 
       setRows([]);
       setBarcode("");
-      setSuccessMessage("Stock-out transaction completed successfully.");
+      const successMessage = "Stock-out transaction completed successfully.";
+      setSuccessMessage(successMessage);
+      toast.success(successMessage);
+      // Navigate to today's stock out details page
+      navigate("/admin/today-stock-out-details");
     } catch (requestError) {
+      const requestErrorMessage =
+        requestError.response?.data?.message || "Unable to complete stock-out transaction.";
       console.error("Failed to save stock-out transaction:", requestError);
-      setError(
-        requestError.response?.data?.message || "Unable to complete stock-out transaction."
-      );
+      setError(requestErrorMessage);
+      toast.error(requestErrorMessage);
     } finally {
       setSaving(false);
     }
@@ -192,8 +226,8 @@ export default function AddItem() {
       <div className="absolute top-16 left-12 w-72 h-72 rounded-full bg-afmc-maroon/10 blur-3xl"></div>
       <div className="absolute bottom-20 right-20 w-80 h-80 rounded-full bg-afmc-maroon2/10 blur-3xl"></div>
 
-      <div className="relative z-10 p-8">
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+      <div className="relative z-10 px-0 py-4 md:p-8">
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-800">Barcode Reader</h1>
             <p className="mt-1 text-sm text-gray-500">
@@ -201,14 +235,16 @@ export default function AddItem() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => navigate("/admin/dashboard")}
-            className="flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-gray-700 shadow hover:shadow-md border border-white/60"
-          >
-            <FaArrowLeft />
-            Go To Dashboard
-          </button>
+          <div className="w-full sm:w-auto flex justify-end">
+            <button
+              type="button"
+              onClick={() => navigate("/admin/dashboard")}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition max-w-max"
+            >
+              <FaArrowLeft />
+              Go To Dashboard
+            </button>
+          </div>
         </div>
 
         <div className="rounded-[32px] border border-white/70 bg-white/85 p-8 shadow-2xl backdrop-blur-md">
@@ -276,65 +312,59 @@ export default function AddItem() {
           )}
 
           <div className="mt-8 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="px-4 py-3 text-left font-medium">S.No</th>
-                  <th className="px-4 py-3 text-left font-medium">Item Code</th>
-                  <th className="px-4 py-3 text-left font-medium">Item Name</th>
-                  <th className="px-4 py-3 text-left font-medium">Quantity</th>
-                  <th className="px-4 py-3 text-left font-medium">Available Qty</th>
-                  <th className="px-4 py-3 text-left font-medium">Unit Price</th>
-                  <th className="px-4 py-3 text-left font-medium">Transaction Date</th>
-                  <th className="px-4 py-3 text-left font-medium">Barcode</th>
-                  <th className="px-4 py-3 text-left font-medium">Volume</th>
-                  <th className="px-4 py-3 text-left font-medium">Batch Name</th>
-                  <th className="px-4 py-3 text-left font-medium">Del</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.length === 0 ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-[1200px] w-full text-left text-sm">
+                <thead className="bg-gray-50 text-gray-600">
                   <tr>
-                    <td colSpan="11" className="px-4 py-8 text-center text-gray-500">
-                      No staged stock-out items yet.
-                    </td>
+                    <th className="px-4 py-3 text-left font-medium">S.No</th>
+                    <th className="px-4 py-3 text-left font-medium">Item Code</th>
+                    <th className="px-4 py-3 text-left font-medium">Item Name</th>
+                    <th className="px-4 py-3 text-left font-medium">Quantity</th>
+                    {/* <th className="px-4 py-3 text-left font-medium">Pegs</th> */}
+                    <th className="px-4 py-3 text-left font-medium">Unit Price</th>
+                    <th className="px-4 py-3 text-left font-medium">Transaction Date</th>
+                    <th className="px-4 py-3 text-left font-medium">Barcode</th>
+                    <th className="px-4 py-3 text-left font-medium">Volume</th>
+                    <th className="px-4 py-3 text-left font-medium">Batch Name</th>
+                    <th className="px-4 py-3 text-left font-medium">Del</th>
                   </tr>
-                ) : (
-                  rows.map((row, index) => (
-                    <tr key={`${row.barcode}-${index}`} className="border-t border-gray-100">
-                      <td className="px-4 py-3">{index + 1}</td>
-                      <td className="px-4 py-3">{row.itemCode}</td>
-                      <td className="px-4 py-3 font-medium text-gray-800">{row.itemName}</td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="number"
-                          value={row.quantity}
-                          readOnly
-                          className="w-24 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2"
-                        />
-                      </td>
-                      <td className="px-4 py-3">{formatQuantity(row.availableQuantity)}</td>
-                      <td className="px-4 py-3">{row.unitPrice}</td>
-                      <td className="px-4 py-3">{row.transactionDate}</td>
-                      <td className="px-4 py-3">{row.barcode}</td>
-                      <td className="px-4 py-3">{row.volume || "-"}</td>
-                      <td className="max-w-[180px] truncate px-4 py-3" title={row.batchName}>
-                        {row.batchName || "-"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteRow(index)}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-red-200 text-red-600 hover:bg-red-50"
-                        >
-                          <FaTrash />
-                        </button>
+                </thead>
+                <tbody>
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan="11" className="px-4 py-8 text-center text-gray-500">
+                        No staged stock-out items yet.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    rows.map((row, index) => (
+                      <tr key={`${row.barcode}-${index}`} className="border-t border-gray-100">
+                        <td className="px-4 py-3">{index + 1}</td>
+                        <td className="px-4 py-3">{row.itemCode}</td>
+                        <td className="px-4 py-3 font-medium text-gray-800">{row.itemName}</td>
+                        <td className="px-4 py-3">{row.pages ?? row.displayPages ?? row.pegs ?? 0}</td>
+                        <td className="px-4 py-3">{row.unitPrice}</td>
+                        <td className="px-4 py-3">{row.transactionDate}</td>
+                        <td className="px-4 py-3">{row.barcode}</td>
+                        <td className="px-4 py-3">{row.volume || "-"}</td>
+                        <td className="max-w-[180px] truncate px-4 py-3" title={row.batchName}>
+                          {row.batchName || "-"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRow(index)}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-red-200 text-red-600 hover:bg-red-50"
+                          >
+                            <FaTrash />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="mt-8 flex flex-wrap items-center justify-between gap-4">

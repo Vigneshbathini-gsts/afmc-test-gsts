@@ -1,8 +1,10 @@
 const express = require("express");
 const userController = require("../controllers/userController");
 const csvUpload = require("../utils/csvUploadMiddleware");
+const requireRole = require("../middleware/requireRole");
 
 const router = express.Router();
+router.use(requireRole(10));
 
 router.get("/", userController.getAllUsers);
 router.get("/roles/options", userController.getRoleOptions);

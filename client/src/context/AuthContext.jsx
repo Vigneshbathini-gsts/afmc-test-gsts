@@ -1,13 +1,60 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { cartAPI } from "../services/api";
+import { clearAuthData, getStoredUser, getToken } from "../utils/authStorage";
+import { getCartCount } from "../utils/cartCount";
 
 const AuthContext = createContext(null);
-const AUTH_USER_STORAGE_KEY = "authUser";
+const ORDER_HISTORY_FILTER_PREFIX = "orderHistoryFilters";
+
+const clearOrderHistoryFilters = () => {
+  try {
+    Object.keys(sessionStorage).forEach((key) => {
+      if (key === ORDER_HISTORY_FILTER_PREFIX || key.startsWith(`${ORDER_HISTORY_FILTER_PREFIX}:`)) {
+        sessionStorage.removeItem(key);
+      }
+    });
+  } catch (_) {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [cartCount, setCartCount] = useState(0);
+  
+  //  NEW: Global Network States
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isSlow, setIsSlow] = useState(false);
+
+  //  NEW: Handle Network Event Listeners
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => {
+      setIsOnline(false);
+      setIsSlow(false); // Reset slow flag if fully offline
+    };
+
+    const handleSlowNetworkEvent = () => {
+      setIsSlow(true);
+      setTimeout(() => setIsSlow(false), 5000); // Auto-hide slow banner after 5s
+    };
+
+    // Native browser connection hooks
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Custom hooks bound to your Axios file events
+    window.addEventListener('app-network-offline', handleOffline);
+    window.addEventListener('app-network-slow', handleSlowNetworkEvent);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('app-network-offline', handleOffline);
+      window.removeEventListener('app-network-slow', handleSlowNetworkEvent);
+    };
+  }, []);
 
   const fetchCartCount = async (userId) => {
     if (!userId) {
@@ -18,7 +65,7 @@ export function AuthProvider({ children }) {
     try {
       const response = await cartAPI.getByUserId(userId);
       const items = response.data?.data || [];
-      setCartCount(items.length);
+      setCartCount(getCartCount(items));
     } catch (error) {
       console.error("Failed to load cart count:", error);
       setCartCount(0);
@@ -26,18 +73,20 @@ export function AuthProvider({ children }) {
   };
 
   useEffect(() => {
-    const storedUser = localStorage.getItem(AUTH_USER_STORAGE_KEY);
+    const storedUser = getStoredUser();
+    const token = getToken();
 
-    if (!storedUser) {
+    if (!storedUser || !token) {
+      clearAuthData();
       setUser(null);
       setIsLoading(false);
       return;
     }
 
     try {
-      setUser(JSON.parse(storedUser));
+      setUser(storedUser);
     } catch (error) {
-      localStorage.removeItem(AUTH_USER_STORAGE_KEY);
+      clearAuthData();
       setUser(null);
     }
     setIsLoading(false);
@@ -49,7 +98,7 @@ export function AuthProvider({ children }) {
 
   const setAuthenticatedUser = (userData) => {
     if (!userData) {
-      localStorage.removeItem(AUTH_USER_STORAGE_KEY);
+      clearAuthData();
       setUser(null);
       setCartCount(0);
       setIsLoading(false);
@@ -68,20 +117,30 @@ export function AuthProvider({ children }) {
       outletType: userData.outletType || null,
     };
 
-    localStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(normalizedUser));
     setUser(normalizedUser);
     setIsLoading(false);
   };
 
   const clearUser = () => {
-    localStorage.removeItem(AUTH_USER_STORAGE_KEY);
+    clearOrderHistoryFilters();
+    clearAuthData();
     setUser(null);
     setIsLoading(false);
   };
 
+  //  NEW: Added isOnline and isSlow variables to the Memoized values
   const value = useMemo(
-    () => ({ user, isLoading, setUser: setAuthenticatedUser, clearUser, cartCount, setCartCount }),
-    [user, isLoading, cartCount]
+    () => ({ 
+      user, 
+      isLoading, 
+      setUser: setAuthenticatedUser, 
+      clearUser, 
+      cartCount, 
+      setCartCount,
+      isOnline, 
+      isSlow 
+    }),
+    [user, isLoading, cartCount, isOnline, isSlow]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

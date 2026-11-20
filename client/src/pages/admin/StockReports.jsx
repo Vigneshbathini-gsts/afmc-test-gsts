@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { FaSearch, FaArrowLeft, FaDownload } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import { inventoryAPI } from "../../services/api";
 import { exportTableToPdf } from "../../utils/pdfExport";
+import { toInitCap } from "../../utils/textFormat";
 
 const toInputDate = (date) => {
   const d = date instanceof Date ? date : new Date(date);
@@ -30,41 +31,88 @@ const formatReportDate = (value) => {
   return `${mm}/${dd}/${yyyy}`;
 };
 
+const REPORT_PAGE_SIZE = 20;
+
 export default function StockReports() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("in");
   const [fromDate, setFromDate] = useState(toInputDate(new Date()));
   const [toDate, setToDate] = useState(toInputDate(new Date()));
+  const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [stockInRows, setStockInRows] = useState([]);
   const [stockOutRows, setStockOutRows] = useState([]);
+  const [stockInSummary, setStockInSummary] = useState({ total_stock: 0, total_price: 0 });
+  const [stockOutSummary, setStockOutSummary] = useState({ total_stock: 0, total_price: 0 });
+  const [stockInPage, setStockInPage] = useState(0);
+  const [stockOutPage, setStockOutPage] = useState(0);
+  const [stockInHasMore, setStockInHasMore] = useState(true);
+  const [stockOutHasMore, setStockOutHasMore] = useState(true);
+  const requestInFlight = useRef(false);
+  const searchTermRef = useRef("");
 
-  const fetchStockIn = useCallback(async (queryParams) => {
-    setLoading(true);
+  const fetchStockIn = useCallback(async (queryParams, { reset = true, nextPage = 0 } = {}) => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    if (reset) setLoading(true);
+    else setLoadingMore(true);
     setError("");
     try {
-      const response = await inventoryAPI.getStockInReport(queryParams);
-      setStockInRows(response.data.data || []);
+      const response = await inventoryAPI.getStockInReport({
+        ...queryParams,
+        limit: REPORT_PAGE_SIZE,
+        offset: nextPage * REPORT_PAGE_SIZE,
+      });
+      const rows = response.data.data || [];
+      const summary = response.data.summary || { total_stock: 0, total_price: 0 };
+      setStockInRows((current) => (reset ? rows : [...current, ...rows]));
+      setStockInSummary(summary);
+      setStockInPage(nextPage + 1);
+      setStockInHasMore(rows.length === REPORT_PAGE_SIZE);
     } catch (err) {
       console.error("Failed to load stock-in report:", err);
       setError("Failed to load stock-in report.");
+      if (reset) setStockInRows([]);
+      setStockInHasMore(false);
     } finally {
+      requestInFlight.current = false;
       setLoading(false);
+      setLoadingMore(false);
     }
   }, []);
 
-  const fetchStockOut = useCallback(async (queryParams) => {
-    setLoading(true);
+  const fetchStockOut = useCallback(async (queryParams, { reset = true, nextPage = 0 } = {}) => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    if (reset) setLoading(true);
+    else setLoadingMore(true);
     setError("");
     try {
-      const response = await inventoryAPI.getStockOutReport(queryParams);
-      setStockOutRows(response.data.data || []);
+      const response = await inventoryAPI.getStockOutReport({
+        ...queryParams,
+        limit: REPORT_PAGE_SIZE,
+        offset: nextPage * REPORT_PAGE_SIZE,
+      });
+      const rows = response.data.data || [];
+      const summary = response.data.summary || { total_stock: 0, total_price: 0 };
+      setStockOutRows((current) => (reset ? rows : [...current, ...rows]));
+      setStockOutSummary(summary);
+      setStockOutPage(nextPage + 1);
+      setStockOutHasMore(rows.length === REPORT_PAGE_SIZE);
+      console.log("data stock reports",response.data)
+      console.log("summary",summary)
+      
     } catch (err) {
       console.error("Failed to load stock-out report:", err);
       setError("Failed to load stock-out report.");
+      if (reset) setStockOutRows([]);
+      setStockOutHasMore(false);
     } finally {
+      requestInFlight.current = false;
       setLoading(false);
+      setLoadingMore(false);
     }
   }, []);
 
@@ -72,28 +120,80 @@ export default function StockReports() {
     const queryParams = {
       fromDate: fromDate || undefined,
       toDate: toDate || undefined,
+      search: searchTermRef.current.trim() || undefined,
     };
 
     if (activeTab === "in") {
-      await fetchStockIn(queryParams);
+      await fetchStockIn(queryParams, { reset: true, nextPage: 0 });
     } else {
-      await fetchStockOut(queryParams);
+      await fetchStockOut(queryParams, { reset: true, nextPage: 0 });
     }
   }, [activeTab, fromDate, toDate, fetchStockIn, fetchStockOut]);
 
-  const rows = activeTab === "in" ? stockInRows : stockOutRows;
+  useEffect(() => {
+    handleSearch();
+  }, [handleSearch]);
 
-  const downloadPdf = () => {
+  const rows = activeTab === "in" ? stockInRows : stockOutRows;
+  const hasMore = activeTab === "in" ? stockInHasMore : stockOutHasMore;
+  const summary = activeTab === "in" ? stockInSummary : stockOutSummary;
+
+  const handleReportScroll = (event) => {
+    const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
+    if (scrollTop + clientHeight < scrollHeight - 80 || loading || loadingMore || !hasMore) {
+      return;
+    }
+
+    const queryParams = {
+      fromDate: fromDate || undefined,
+      toDate: toDate || undefined,
+      search: searchTerm.trim() || undefined,
+    };
+
+    if (activeTab === "in") {
+      fetchStockIn(queryParams, { reset: false, nextPage: stockInPage });
+    } else {
+      fetchStockOut(queryParams, { reset: false, nextPage: stockOutPage });
+    }
+  };
+
+  const downloadPdf = async () => {
     if (!rows || rows.length === 0) return;
 
     const isStockIn = activeTab === "in";
-    const tableRows = rows.map((row) =>
+    const reportRows = [];
+    let offsetPage = 0;
+    const queryParams = {
+      fromDate: fromDate || undefined,
+      toDate: toDate || undefined,
+      search: searchTerm.trim() || undefined,
+    };
+
+    while (true) {
+      const response = isStockIn
+        ? await inventoryAPI.getStockInReport({
+            ...queryParams,
+            limit: REPORT_PAGE_SIZE,
+            offset: offsetPage * REPORT_PAGE_SIZE,
+          })
+        : await inventoryAPI.getStockOutReport({
+            ...queryParams,
+            limit: REPORT_PAGE_SIZE,
+            offset: offsetPage * REPORT_PAGE_SIZE,
+          });
+      const chunk = response.data.data || [];
+      reportRows.push(...chunk);
+      if (chunk.length < REPORT_PAGE_SIZE) break;
+      offsetPage += 1;
+    }
+
+    const tableRows = reportRows.map((row) =>
       isStockIn
         ? [
             row.item_code,
             row.item_name,
-            row.batch_id || "-",
-            formatReportDate(row.creation_date),
+            // row.batch_id || "-",
+            formatReportDate(row.transaction_date || row.creation_date),
             row.ac_unit || "Nos",
             row.stock,
             row.total_price ?? row.totalprice ?? 0,
@@ -108,6 +208,21 @@ export default function StockReports() {
           ]
     );
 
+    const totalStock = reportRows.reduce(
+      (sum, row) => sum + Number(row.stock || 0),
+      0
+    );
+    const totalPrice = reportRows.reduce(
+      (sum, row) => sum + Number(row.total_price ?? row.totalprice ?? 0),
+      0
+    );
+
+    if (isStockIn) {
+      tableRows.push(["", "", "Totals", "", totalStock, totalPrice]);
+    } else {
+      tableRows.push(["", "", "Totals", "", totalStock, totalPrice]);
+    }
+
     exportTableToPdf({
       title: isStockIn ? "Stock In Report" : "Stock Out Report",
       fileName: isStockIn ? "stock-in-report.pdf" : "stock-out-report.pdf",
@@ -118,7 +233,7 @@ export default function StockReports() {
         ? [
             "Item Code",
             "Item Name",
-            "Batch ID",
+            // "Batch ID",
             "Transaction Date",
             "A/c Unit",
             "Stock",
@@ -142,15 +257,15 @@ export default function StockReports() {
       <div className="absolute top-16 left-12 w-72 h-72 bg-afmc-maroon/10 rounded-full blur-3xl"></div>
       <div className="absolute bottom-20 right-20 w-80 h-80 bg-afmc-maroon2/10 rounded-full blur-3xl"></div>
 
-      <div className="p-8 relative z-10">
+      <div className="px-0 py-4 md:p-8 relative z-10">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
           <h1 className="text-2xl font-semibold text-gray-800">
-            Stock In/Out Report
+            {activeTab === "in" ? "Stock In Report" : "Stock Out Report"}
           </h1>
           <button
             type="button"
             onClick={() => navigate("/admin/dashboard")}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white shadow hover:shadow-md border border-white/60 text-gray-700"
+            className="self-end sm:self-auto inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition max-w-max"
           >
             <FaArrowLeft />
             Go To Dashboard
@@ -158,8 +273,8 @@ export default function StockReports() {
         </div>
 
         <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm p-6">
-          <div className="flex flex-wrap items-end gap-4 mb-6">
-            <div>
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2 mb-6 md:flex md:flex-wrap md:gap-4">
+            <div className="min-w-0 md:w-auto">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 From
               </label>
@@ -167,11 +282,11 @@ export default function StockReports() {
                 type="date"
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
-                className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
               />
             </div>
 
-            <div>
+            <div className="min-w-0 md:w-auto">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 To
               </label>
@@ -179,27 +294,50 @@ export default function StockReports() {
                 type="date"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
-                className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+              />
+            </div>
+
+            <div className="col-span-2 min-w-0 md:col-span-1 md:w-64">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Search item
+              </label>
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(e) => {
+                  searchTermRef.current = e.target.value;
+                  setSearchTerm(e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSearch();
+                }}
+                placeholder="Name or item code"
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                aria-label="Search by item name or item code"
               />
             </div>
 
             <button
               type="button"
               onClick={handleSearch}
-              className="px-6 py-3 rounded-2xl bg-[#5b5b5b] text-white font-semibold flex items-center gap-2 shadow hover:shadow-md"
+              className="h-12 w-10 md:w-auto md:px-6 md:py-3 rounded-2xl bg-[#5b5b5b] text-white font-semibold flex items-center justify-center gap-2 shadow hover:shadow-md"
+              aria-label="Search stock report"
             >
               <FaSearch />
-              Search
+              <span className="hidden md:inline">Search</span>
             </button>
 
-            <button
-              type="button"
-              onClick={downloadPdf}
-              className="ml-auto px-6 py-3 rounded-2xl bg-afmc-maroon hover:bg-afmc-maroon2 text-white font-semibold flex items-center gap-2 shadow hover:shadow-md transition"
-            >
-              <FaDownload />
-              Download PDF
-            </button>
+            <div className="col-span-3 w-full flex justify-end md:w-auto md:ml-auto">
+              <button
+                type="button"
+                onClick={downloadPdf}
+                className="w-auto px-5 md:px-6 py-3 rounded-2xl bg-afmc-maroon hover:bg-afmc-maroon2 text-white font-semibold flex items-center justify-center gap-2 shadow hover:shadow-md transition"
+              >
+                <FaDownload />
+                Download PDF
+              </button>
+            </div>
           </div>
 
           <div className="flex rounded-2xl overflow-hidden border border-gray-200 bg-white mb-6">
@@ -234,6 +372,7 @@ export default function StockReports() {
           )}
 
           <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+            <div className="max-h-[70vh] overflow-auto" onScroll={handleReportScroll}>
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-gray-600">
                 <tr>
@@ -243,7 +382,7 @@ export default function StockReports() {
                     <th className="px-4 py-3 text-left font-medium">Batch ID</th>
                   )} */}
                   <th className="px-4 py-3 text-left font-medium">
-                    Transaction Date
+                    Creation  Date
                   </th>
                   <th className="px-4 py-3 text-left font-medium">A/c Unit</th>
                   <th className="px-4 py-3 text-left font-medium">Stock</th>
@@ -253,13 +392,13 @@ export default function StockReports() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={activeTab === "in" ? 7 : 6} className="px-4 py-6 text-center text-gray-500">
+                    <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
                       Loading report...
                     </td>
                   </tr>
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={activeTab === "in" ? 7 : 6} className="px-4 py-6 text-center text-gray-500">
+                    <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
                       No records found.
                     </td>
                   </tr>
@@ -267,12 +406,12 @@ export default function StockReports() {
                   rows.map((row, idx) => (
                     <tr key={`${row.item_code}-${idx}`} className="border-t border-gray-100">
                       <td className="px-4 py-3">{row.item_code}</td>
-                      <td className="px-4 py-3">{row.item_name}</td>
+                      <td className="px-4 py-3">{toInitCap(row.item_name)}</td>
                       {/* {activeTab === "in" && (
                         <td className="px-4 py-3">{row.batch_id || "-"}</td>
                       )} */}
                       <td className="px-4 py-3">
-                        {formatDisplayDate(row.creation_date)}
+                        {formatDisplayDate(row.transaction_date || row.creation_date)}
                       </td>
                       <td className="px-4 py-3">{row.ac_unit || "Nos"}</td>
                       <td className="px-4 py-3">{row.stock}</td>
@@ -282,8 +421,28 @@ export default function StockReports() {
                     </tr>
                   ))
                 )}
+                {!loading && rows.length > 0 && (
+                  <tr className="border-t border-gray-200 bg-gray-50 font-semibold">
+                    <td className="px-4 py-3" colSpan={4}>
+                      Totals
+                    </td>
+                    <td className="px-4 py-3">{summary.total_stock || 0}</td>
+                    <td className="px-4 py-3">{summary.total_price || 0}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
+            {loadingMore && (
+              <p className="px-4 py-4 text-center text-gray-500">
+                Loading more report data...
+              </p>
+            )}
+            {!loading && !loadingMore && rows.length > 0 && !hasMore && (
+              <p className="px-4 py-4 text-center text-gray-500">
+                No more data
+              </p>
+            )}
+            </div>
           </div>
         </div>
       </div>

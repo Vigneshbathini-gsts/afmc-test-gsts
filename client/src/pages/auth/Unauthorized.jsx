@@ -1,13 +1,14 @@
 import React, { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { getStoredUser } from "../../utils/authStorage";
 
 export default function Unauthorized() {
   const navigate = useNavigate();
   const location = useLocation();
-  const token = localStorage.getItem("token");
+  const hasUser = Boolean(getStoredUser());
 
   useEffect(() => {
-    const message = token
+    const message = hasUser
       ? "You are not authorized to access this page. Please login with the correct account."
       : "Session is over. Please login again.";
 
@@ -24,7 +25,7 @@ export default function Unauthorized() {
     <div style={{ padding: 24 }}>
       <h2>Access issue</h2>
       <p>
-        {token
+        {hasUser
           ? "You are not authorized to access this page."
           : "Your session has ended."}{" "}
         Please login.

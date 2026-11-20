@@ -2,7 +2,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const configuredUploadPath =
-  process.env.AFMC_IMAGE_UPLOAD_PATH || "/var/www/AFMCIMAGES";
+  process.env.AFMC_IMAGE_UPLOAD_PATH || "/var/www/AFMCMESSTEST";
 const uploadPath = path.resolve(configuredUploadPath);
 if (!fs.existsSync(uploadPath)) {
   fs.mkdirSync(uploadPath, { recursive: true });
@@ -12,14 +12,14 @@ const storage = multer.diskStorage({
     cb(null, uploadPath);
   },
   filename: function (req, file, cb) {
-  let itemName = req.body.itemName || "image";
+    let itemName = require("crypto").randomBytes(16).toString("hex");
   // sanitize item name
   itemName = itemName
     .trim()
     .replace(/\s+/g, "_")     // spaces → _
     .replace(/[^\w.-]/g, ""); // remove special chars
   const ext = path.extname(file.originalname); // .jpg, .png
-    const finalName = `${itemName}_${Date.now()}${ext}`;
+    const finalName = `${itemName}.jpg`;
 
   cb(null, finalName);
 }
@@ -27,14 +27,13 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png|webp|jfif/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
+  const extname = path.extname(file.originalname).toLowerCase() === ".jpg";
+  const mimetype = file.mimetype === "image/jpeg";
 
   if (extname && mimetype) {
     return cb(null, true);
   } else {
-    cb(new Error("Only image files are allowed: jpg, jpeg, png, webp, jfif"));
+    cb(new Error("Only JPG image files are allowed."));
   }
 };
 
@@ -46,11 +45,23 @@ const upload = multer({
 
 const publicBaseUrl =
   process.env.AFMC_IMAGE_PUBLIC_BASE_URL ||
-  "https://afmc.globalsparkteksolutions.com/AFMCIMAGES";
+  "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST";
 
 upload.uploadPath = uploadPath;
 upload.publicBaseUrl = publicBaseUrl.replace(/\/+$/, "");
 
-module.exports = upload;
+upload.validateImageSignature = (req, res, next) => {
+  if (!req.file) return next();
+  const fd = fs.openSync(req.file.path, "r");
+  const header = Buffer.alloc(3);
+  fs.readSync(fd, header, 0, 3, 0);
+  fs.closeSync(fd);
+  if (header[0] !== 0xff || header[1] !== 0xd8 || header[2] !== 0xff) {
+    fs.rmSync(req.file.path, { force: true });
+    return res.status(400).json({ success: false, message: "Invalid image content" });
+  }
+  return next();
+};
 
+module.exports = upload;
 

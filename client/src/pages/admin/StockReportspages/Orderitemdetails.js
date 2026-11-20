@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { FaDownload, FaSearch } from "react-icons/fa";
+import React, { useEffect, useRef, useState } from "react";
+import { FaDownload, FaSearch, FaChevronDown } from "react-icons/fa";
 import { FaArrowLeft } from "react-icons/fa";
 import api from "../../../services/api";
 import Stackreporttab from "./Stackreporttab";
@@ -17,13 +17,48 @@ const toInputDate = (date) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+// itemNames is an array; join into a comma-separated string for the API
 const buildQueryParams = (filters) => {
   const params = {};
   Object.entries(filters).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      const cleaned = value.map((v) => String(v).trim()).filter(Boolean);
+      if (cleaned.length) params[key] = cleaned.join(",");
+      return;
+    }
     const trimmed = typeof value === "string" ? value.trim() : value;
     if (trimmed) params[key] = trimmed;
   });
   return params;
+};
+
+// --- FIX: normalizes plain string arrays (e.g. ["Coke", "Sprite"]) or object
+// arrays into a consistent { label, value } shape. Without this, options that
+// are plain strings have no `.value`/`.label` property, so every checkbox in
+// MultiSelectDropdown ends up sharing `value = undefined`, causing "select
+// one -> selects all" behavior. ---
+const normalizeDropdownOptions = (options) => {
+  if (!Array.isArray(options)) return [];
+
+  return options
+    .map((option) => {
+      if (typeof option === "string" || typeof option === "number") {
+        const value = String(option).trim();
+        return value ? { label: value, value } : null;
+      }
+
+      if (!option || typeof option !== "object") return null;
+
+      const label = String(
+        option.label ?? option.name ?? option.title ?? option.D ?? option.d ?? option.value ?? ""
+      ).trim();
+      const value = String(
+        option.value ?? option.id ?? option.key ?? option.R ?? option.r ?? option.label ?? ""
+      ).trim();
+
+      return label && value ? { label, value } : null;
+    })
+    .filter(Boolean);
 };
 
 const formatNumber = (value, digits = 2) => {
@@ -32,11 +67,170 @@ const formatNumber = (value, digits = 2) => {
   return num.toFixed(digits);
 };
 
+const getRowValue = (row, ...keys) => {
+  for (const key of keys) {
+    if (row?.[key] !== undefined && row?.[key] !== null && row?.[key] !== "") {
+      return row[key];
+    }
+  }
+  return null;
+};
+
+const formatRowNumber = (row, keys, digits = 2) => {
+  const value = getRowValue(row, ...keys);
+  return value === null ? "-" : formatNumber(value, digits);
+};
+
+const isFreeItem = (row) => {
+  const value = getRowValue(row, "subtotal", "SUBTOTAL");
+  return Number(value) === 0;
+};
+
 const formatQuantity = (value) => {
   if (!value) return "-";
-  if (String(value).toUpperCase() === "TOTAL") return "Total";
+  if (String(value).toUpperCase() === "TOTAL") return "";
   return Number(value);
 };
+
+const getDisplayItemName = (row) => {
+  const rawName = getRowValue(row, "item_name", "ITEM_NAME") || "-";
+  return toInitCap(rawName);
+};
+
+const REPORT_PAGE_SIZE = 20;
+
+/**
+ * Simple multi-select dropdown with checkboxes.
+ * values: array of selected option values (strings)
+ * onChange: (newArrayOfValues) => void
+ * options: [{ label, value }]
+ */
+function MultiSelectDropdown({
+  values = [],
+  onChange,
+  options = [],
+  placeholder = "Select...",
+  allLabel = "All",
+  loading = false,
+  loadingLabel = "Loading...",
+  formatLabel = (v) => v,
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filteredOptions = React.useMemo(() => {
+    if (!search.trim()) return options;
+    const q = search.trim().toLowerCase();
+    return options.filter((opt) => opt.label.toLowerCase().includes(q));
+  }, [options, search]);
+
+  const isSelected = (value) => values.includes(value);
+
+  const toggleValue = (value) => {
+    if (isSelected(value)) {
+      onChange(values.filter((v) => v !== value));
+    } else {
+      onChange([...values, value]);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    const allValues = filteredOptions.map((o) => o.value);
+    const allSelected = allValues.length > 0 && allValues.every((v) => values.includes(v));
+    if (allSelected) {
+      onChange(values.filter((v) => !allValues.includes(v)));
+    } else {
+      const merged = Array.from(new Set([...values, ...allValues]));
+      onChange(merged);
+    }
+  };
+
+  const clearAll = () => onChange([]);
+
+  const buttonLabel = () => {
+    if (loading) return loadingLabel;
+    if (values.length === 0) return placeholder;
+    if (values.length === 1) {
+      const match = options.find((o) => o.value === values[0]);
+      return formatLabel(match ? match.label : values[0]);
+    }
+    return `${values.length} selected`;
+  };
+
+  const allFilteredSelected =
+    filteredOptions.length > 0 && filteredOptions.every((o) => values.includes(o.value));
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        disabled={loading}
+        className="w-full flex items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-left text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 disabled:opacity-60"
+      >
+        <span className="truncate">{buttonLabel()}</span>
+        <FaChevronDown className={`ml-2 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} size={12} />
+      </button>
+
+      {open && !loading && (
+        <div className="absolute z-20 mt-2 w-full rounded-2xl border border-gray-200 bg-white shadow-lg max-h-72 overflow-hidden flex flex-col">
+          <div className="p-2 border-b border-gray-100">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search..."
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-afmc-maroon2/40"
+            />
+          </div>
+
+          <div className="flex items-center justify-between px-3 py-2 text-xs text-afmc-maroon border-b border-gray-100">
+            <button type="button" className="hover:underline" onClick={toggleSelectAll}>
+              {allFilteredSelected ? "Unselect All" : allLabel}
+            </button>
+            {values.length > 0 && (
+              <button type="button" className="hover:underline text-gray-500" onClick={clearAll}>
+                Clear
+              </button>
+            )}
+          </div>
+
+          <div className="overflow-y-auto">
+            {filteredOptions.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-gray-500">No options found.</div>
+            ) : (
+              filteredOptions.map((opt) => (
+                <label
+                  key={opt.value}
+                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected(opt.value)}
+                    onChange={() => toggleValue(opt.value)}
+                    className="rounded border-gray-300 text-afmc-maroon focus:ring-afmc-maroon2"
+                  />
+                  <span className="truncate">{formatLabel(opt.label)}</span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Orderitemdetails() {
   const navigate = useNavigate();
@@ -44,7 +238,7 @@ export default function Orderitemdetails() {
   const initialFilters = {
     fromDate: today,
     toDate: today,
-    itemNames: "",
+    itemNames: [], // array of selected item values
     kitchenName: "",
     userName: "",
   };
@@ -52,9 +246,14 @@ export default function Orderitemdetails() {
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
   const [data, setData] = useState([]);
+  const [summaryRow, setSummaryRow] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const requestInFlight = useRef(false);
   const [filterOptions, setFilterOptions] = useState({
     itemNames: [],
     userNames: [],
@@ -79,13 +278,20 @@ export default function Orderitemdetails() {
         });
 
         if (response.data.success) {
-          setFilterOptions(
-            response.data.data || {
-              itemNames: [],
-              userNames: [],
-              kitchenNames: [],
-            }
-          );
+          const raw = response.data.data || {
+            itemNames: [],
+            userNames: [],
+            kitchenNames: [],
+          };
+
+          // --- FIX: normalize raw string arrays into { label, value } objects
+          // before storing in state, so MultiSelectDropdown/FilterDropdown get
+          // consistent, unique option shapes. ---
+          setFilterOptions({
+            itemNames: normalizeDropdownOptions(raw.itemNames),
+            userNames: normalizeDropdownOptions(raw.userNames),
+            kitchenNames: normalizeDropdownOptions(raw.kitchenNames),
+          });
         }
       } catch (fetchError) {
         console.error(fetchError);
@@ -102,31 +308,58 @@ export default function Orderitemdetails() {
     fetchFilterOptions();
   }, [filters.fromDate, filters.toDate]);
 
-  const fetchData = async (activeFilters) => {
-    setLoading(true);
+  const fetchData = async (activeFilters, { reset = true, nextPage = 0 } = {}) => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    if (reset) setLoading(true);
+    else setLoadingMore(true);
     setError("");
     try {
       const res = await api.get("/reports/orderitem", {
-        params: buildQueryParams(activeFilters),
+        params: {
+          ...buildQueryParams(activeFilters),
+          limit: REPORT_PAGE_SIZE,
+          offset: nextPage * REPORT_PAGE_SIZE,
+        },
       });
       if (res.data.success) {
-        setData(res.data.data || []);
+        const rows = res.data.data || [];
+        const detailRows = rows.filter((row) => row?.item_id);
+        const totalRow = rows.find((row) => !row?.item_id) || null;
+        setData((current) => (reset ? detailRows : [...current, ...detailRows]));
+        setSummaryRow(totalRow);
+        setPage(nextPage + 1);
+        setHasMore(detailRows.length === REPORT_PAGE_SIZE);
       }
     } catch (err) {
       console.error(err);
       setError(
         err.response?.data?.message || "Unable to fetch item details report."
       );
-      setData([]);
+      if (reset) {
+        setData([]);
+        setSummaryRow(null);
+      }
+      setHasMore(false);
     } finally {
+      requestInFlight.current = false;
       setLoading(false);
+      setLoadingMore(false);
     }
   };
+
+  useEffect(() => {
+    setAppliedFilters(initialFilters);
+    setHasSearched(true);
+    fetchData(initialFilters, { reset: true, nextPage: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSearch = async () => {
     if (!filters.fromDate || !filters.toDate) {
       setHasSearched(false);
       setData([]);
+      setSummaryRow(null);
       setError("Please select both From Date and To Date before searching.");
       return;
     }
@@ -135,11 +368,50 @@ export default function Orderitemdetails() {
     setAppliedFilters(nextFilters);
     setHasSearched(true);
     setError("");
-    await fetchData(nextFilters);
+    setPage(0);
+    setHasMore(true);
+    await fetchData(nextFilters, { reset: true, nextPage: 0 });
   };
 
-  const exportPdf = () => {
+  const displayRows = data.length > 0 && summaryRow ? [...data, summaryRow] : data;
+
+  const handleTableScroll = (event) => {
+    const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
+
+    if (
+      scrollTop + clientHeight >= scrollHeight - 80 &&
+      !loading &&
+      !loadingMore &&
+      hasMore
+    ) {
+      fetchData(appliedFilters, { reset: false, nextPage: page });
+    }
+  };
+
+  const exportPdf = async () => {
     if (!data.length) return;
+
+    const exportRows = [];
+    let exportSummary = null;
+    let offsetPage = 0;
+
+    while (true) {
+      const res = await api.get("/reports/orderitem", {
+        params: {
+          ...buildQueryParams(appliedFilters),
+          limit: REPORT_PAGE_SIZE,
+          offset: offsetPage * REPORT_PAGE_SIZE,
+        },
+      });
+      const rows = res.data.data || [];
+      const detailRows = rows.filter((row) => row?.item_id);
+      exportSummary = rows.find((row) => !row?.item_id) || exportSummary;
+      exportRows.push(...detailRows);
+      if (detailRows.length < REPORT_PAGE_SIZE) break;
+      offsetPage += 1;
+    }
+
+    const pdfRows = exportSummary ? [...exportRows, exportSummary] : exportRows;
 
     exportTableToPdf({
       title: "Order Item Details Report",
@@ -149,24 +421,31 @@ export default function Orderitemdetails() {
       }`,
       headers: [
         "Item",
+        "Type",
         "Quantity",
         "Price",
-        "Total Profit",
+        "Total Profit(Amount)",
         "Unit Profit",
         "Prep Charges",
         "Profit %",
         "Total",
       ],
-      rows: data.map((row) => [
-        row.item_name || "-",
-        String(formatQuantity(row.quantity)),
-        row.price ? formatNumber(row.price) : "-",
-        row.total_profit ? formatNumber(row.total_profit) : "-",
-        row.unit_profit ? formatNumber(row.unit_profit) : "-",
-        row.food_pr_charges ? formatNumber(row.food_pr_charges) : "-",
-        row.totalprofit ? `${formatNumber(row.totalprofit, 0)}%` : "-",
-        row.subtotal ? formatNumber(row.subtotal) : "-",
+      rows: pdfRows.map((row) => [
+        row.item_id ? getDisplayItemName(row) : "Total",
+        row.item_id ? getRowValue(row, "type", "TYPE", "category_type", "CATEGORY_TYPE", "peg_type", "PEG_TYPE") || "NA" : "",
+        String(formatQuantity(getRowValue(row, "quantity", "QUANTITY"))),
+        formatRowNumber(row, ["price", "PRICE"]),
+        row.item_id && isFreeItem(row)
+          ? "Free Item"
+          : formatRowNumber(row, ["total_profit", "TOTAL_PROFIT", "totalProfit"]),
+        formatRowNumber(row, ["unit_profit", "UNIT_PROFIT", "unitProfit"]),
+        formatRowNumber(row, ["food_pr_charges", "FOOD_PR_CHARGES", "foodPrCharges"]),
+        getRowValue(row, "totalprofit", "TOTALPROFIT") !== null
+          ? `${formatRowNumber(row, ["totalprofit", "TOTALPROFIT"], 0)}%`
+          : "-",
+        formatRowNumber(row, ["subtotal", "SUBTOTAL", "total", "TOTAL"]),
       ]),
+      bodyStyles: { halign: "center" },
     });
   };
 
@@ -175,7 +454,7 @@ export default function Orderitemdetails() {
       <div className="absolute top-16 left-12 w-72 h-72 bg-afmc-maroon/10 rounded-full blur-3xl"></div>
       <div className="absolute bottom-20 right-20 w-80 h-80 bg-afmc-maroon2/10 rounded-full blur-3xl"></div>
 
-      <div className="relative z-10 p-8">
+      <div className="relative z-10 px-0 py-4 md:p-8">
         <div className="flex items-center justify-between mb-6 md:mb-8">
           <h1 className="text-2xl font-semibold text-afmc-maroon">
             Stock Reports
@@ -183,7 +462,7 @@ export default function Orderitemdetails() {
           <button
             type="button"
             onClick={() => navigate("/admin/dashboard")}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition"
+            className="self-end sm:self-auto inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition max-w-max"
           >
             <FaArrowLeft />
             Go To Dashboard
@@ -193,7 +472,7 @@ export default function Orderitemdetails() {
         <Stackreporttab showTopBar={false} showReportTitle={false} />
 
         <div className="mt-8 bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm p-6">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 From
@@ -224,14 +503,14 @@ export default function Orderitemdetails() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Item Name
               </label>
-              <FilterDropdown
-                value={filters.itemNames}
+              <MultiSelectDropdown
+                values={filters.itemNames}
                 onChange={(next) =>
                   setFilters((current) => ({ ...current, itemNames: next }))
                 }
                 options={filterOptions.itemNames}
-                placeholder="Select Item Name"
-                allLabel="All Items"
+                placeholder="Select Item Name(s)"
+                allLabel="Select All"
                 loading={filtersLoading}
                 loadingLabel="Loading items..."
                 formatLabel={toInitCap}
@@ -256,7 +535,7 @@ export default function Orderitemdetails() {
               />
             </div>
 
-            <div>
+            <div className="col-start-2 md:col-start-auto">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 User Name
               </label>
@@ -308,21 +587,25 @@ export default function Orderitemdetails() {
             </div>
           ) : (
             <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+              <div className="max-h-[70vh] overflow-auto" onScroll={handleTableScroll}>
+                <div className="overflow-x-auto">
+                <table className="min-w-[640px] w-full text-sm">
                   <thead className="bg-gray-50 text-gray-600">
                     <tr>
                       <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                         Item
                       </th>
                       <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                        Type
+                      </th>
+                      <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                         Quantity
                       </th>
                       <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                        Total Profit
+                        Total Profit(Amount)
                       </th>
                       <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                        Prep Charges
+                        Preparation Charges
                       </th>
                       <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                         Total
@@ -330,45 +613,61 @@ export default function Orderitemdetails() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.length ? (
-                      data.map((row, i) => (
+                    {displayRows.length ? (
+                      displayRows.map((row, i) => (
                         <tr
-                          key={row.item_id || `${row.item_name || "row"}-${i}`}
+                          key={
+                            row.item_id
+                              ? `${row.item_id}-${getRowValue(row, "peg_type", "PEG_TYPE") || "NA"}`
+                              : `${row.item_name || "row"}-${i}`
+                          }
                           className={`border-t border-gray-100 hover:bg-gray-50 ${
                             !row.item_id ? "font-bold text-red-600" : ""
                           }`}
                         >
                           <td className="px-4 py-3 whitespace-nowrap capitalize">
-                            {toInitCap(row.item_name || "-")}
+                            {row.item_id ? getDisplayItemName(row) : "Total"}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
-                            {formatQuantity(row.quantity)}
+                            {row.item_id ? getRowValue(row, "type", "TYPE", "category_type", "CATEGORY_TYPE", "peg_type", "PEG_TYPE") || "NA" : ""}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
-                            {row.total_profit ? formatNumber(row.total_profit) : "-"}
+                            {formatQuantity(getRowValue(row, "quantity", "QUANTITY"))}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
-                            {row.food_pr_charges
-                              ? formatNumber(row.food_pr_charges)
-                              : "-"}
+                            {row.item_id && isFreeItem(row) ? (
+                              <span className="text-green-600 font-medium">Free Item</span>
+                            ) : (
+                              formatRowNumber(row, ["total_profit", "TOTAL_PROFIT", "totalProfit"])
+                            )}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
-                            {row.subtotal ? formatNumber(row.subtotal) : "-"}
+                            {formatRowNumber(row, ["food_pr_charges", "FOOD_PR_CHARGES", "foodPrCharges"])}
                           </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {formatRowNumber(row, ["subtotal", "SUBTOTAL", "total", "TOTAL"])}</td>
                         </tr>
                       ))
                     ) : (
                       <tr className="border-t border-gray-100">
-                        <td
-                          className="px-4 py-6 text-center text-gray-500"
-                          colSpan="5"
-                        >
+                        <td className="px-4 py-6 text-center text-gray-500" colSpan="6">
                           No records found.
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+                </div>
+                {loadingMore && (
+                  <p className="px-4 py-4 text-center text-gray-500">
+                    Loading more data...
+                  </p>
+                )}
+                {!loading && !loadingMore && data.length > 0 && !hasMore && (
+                  <p className="px-4 py-4 text-center text-gray-500">
+                    No more data
+                  </p>
+                )}
               </div>
             </div>
           )}

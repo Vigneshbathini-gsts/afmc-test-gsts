@@ -1,4 +1,6 @@
 const db = require("../config/db");
+const { formatToSql, getStartOfDay, getEndOfDay, parseDate } = require("../utils/dateUtils");
+const { isExcludedLiquorSubcategory } = require("../helpers/pricingHelper");
 
 const ID_LOCKS = {
   inventory: "xxafmc_inventory_item_id_lock",
@@ -33,20 +35,33 @@ const buildInventoryQuery = ({ categoryId, itemCode, search }) => {
         xi.ITEM_ID AS item_id,
         xi.ITEM_CODE AS item_code,
         xi.ITEM_NAME AS item_name,
+        xi.CATEGORY_ID AS category_id,
+        xi.SUB_CATEGORY AS sub_category,
+        xs.SUB_CATEGORY_NAME AS item_group,
         COALESCE(NULLIF(xi.\`A/C_UNIT\`, ''), 'Nos') AS ac_unit,
         IFNULL(xi.STOCK_QUANTITY, 0) AS stock_quantity,
+        IFNULL(xi.PROFIT, 0) AS profit,
+        xi.FLAG AS prep_charges,
         xi.ITEM_CODE AS itemid,
         xi.FILE_NAME AS file_name,
-        xi.MIME_TYPE AS mime_type
+        xi.MIME_TYPE AS mime_type,
+        xi.STATUS AS status  -- ADD THIS
     FROM xxafmc_inventory xi
+    LEFT JOIN xxafmc_sub_categories xs ON xs.SUB_CATEGORY_ID = xi.SUB_CATEGORY
     ${whereClause}
     GROUP BY xi.ITEM_CODE,
              xi.ITEM_NAME,
+             xi.CATEGORY_ID,
+             xi.SUB_CATEGORY,
+             xs.SUB_CATEGORY_NAME,
              xi.STOCK_QUANTITY,
+             xi.PROFIT,
+             xi.FLAG,
              xi.\`A/C_UNIT\`,
              xi.ITEM_ID,
              xi.FILE_NAME,
-             xi.MIME_TYPE
+             xi.MIME_TYPE,
+             xi.STATUS  -- ADD THIS
     ORDER BY xi.ITEM_ID DESC
   `;
 
@@ -55,7 +70,13 @@ const buildInventoryQuery = ({ categoryId, itemCode, search }) => {
 
 const getInventoryList = async (filters) => {
   const { sql, params } = buildInventoryQuery(filters);
-  const [rows] = await db.execute(sql, params);
+  const limit = Number(filters?.limit);
+  const offset = Number(filters?.offset);
+  const hasPagination =
+    Number.isInteger(limit) && limit > 0 && Number.isInteger(offset) && offset >= 0;
+  const pagedSql = hasPagination ? `${sql} LIMIT ${limit} OFFSET ${offset}` : sql;
+  const [rows] = await db.execute(pagedSql, params);
+  // console.log("rows", rows);
   return rows;
 };
 
@@ -91,6 +112,7 @@ const getItems = async (categoryId) => {
     ORDER BY ITEM_NAME
   `;
   const [rows] = await db.execute(sql, params);
+  // console.log("rows", rows);
   return rows;
 };
 
@@ -131,6 +153,19 @@ const getCategoryDefaults = async (categoryId) => {
   return rows && rows.length ? rows[0] : null;
 };
 
+const subCategoryBelongsToCategory = async (categoryId, subCategoryId, executor = db) => {
+  if (!categoryId || !subCategoryId) return false;
+
+  const sql = `
+    SELECT COUNT(1) AS cnt
+    FROM xxafmc_sub_categories
+    WHERE CATEGORY_ID = ?
+      AND SUB_CATEGORY_ID = ?
+  `;
+  const [rows] = await executor.execute(sql, [Number(categoryId), Number(subCategoryId)]);
+  return Number(rows[0]?.cnt || 0) > 0;
+};
+
 const acquireNamedLock = async (connection, lockName) => {
   const [rows] = await connection.execute("SELECT GET_LOCK(?, 10) AS acquired", [lockName]);
   return Number(rows[0]?.acquired || 0) === 1;
@@ -151,34 +186,21 @@ const requiresVolume = (acUnit) => {
   return unit !== "" && unit !== "NOS";
 };
 
-const validateStockInItem = (item) => {
-  const numericRate = Number(item.rate);
-  const normalizedBarcode = sanitizeBarcode(item.barcode);
+const getDefaultServingVolume = (subCategory, acUnit) => {
+  const sub = Number(subCategory);
+  const unit = String(acUnit || "").trim().toLowerCase();
 
-  if (
-    !item.itemCode ||
-    !Number.isFinite(numericRate) ||
-    numericRate <= 0 ||
-    !item.transactionDate ||
-    !normalizedBarcode
-  ) {
-    return false;
-  }
-
-  if (!/^\d{4,32}$/.test(normalizedBarcode)) {
-    return false;
-  }
-
-  return true;
+  if (sub === 6 && unit === "glass") return "200";
+  if (sub === 9 && unit === "glass") return "250";
+  return "";
 };
 
 const validateStockOutItem = (item) => {
-  const numericBarcode = Number(item.barcode);
   const numericQuantity = Number(item.quantity);
+  const normalizedBarcode = sanitizeBarcode(item.barcode);
 
   return (
-    Number.isFinite(numericBarcode) &&
-    numericBarcode > 0 &&
+    /^\d{4,32}$/.test(normalizedBarcode) &&
     Number.isFinite(numericQuantity) &&
     numericQuantity > 0
   );
@@ -191,6 +213,7 @@ const createItem = async (payload) => {
     categoryId,
     subCategory,
     acUnit,
+    servingVolume,
     prepCharges,
     createdBy,
     fileName,
@@ -210,25 +233,46 @@ const createItem = async (payload) => {
       "SELECT IFNULL(MAX(ITEM_ID), 0) + 1 AS next_id FROM xxafmc_inventory"
     );
     const nextId = nextIdRows[0]?.next_id || 1;
+
+    if (subCategory) {
+      const isValidSubCategory = await subCategoryBelongsToCategory(
+        categoryId,
+        subCategory,
+        connection
+      );
+      if (!isValidSubCategory) {
+        const error = new Error("INVALID_SUB_CATEGORY");
+        error.code = "INVALID_SUB_CATEGORY";
+        throw error;
+      }
+    }
+
     const defaults = await getCategoryDefaults(categoryId);
 
-    let foodPrCharges = defaults?.food_pr_charges ?? 0;
-    let prCharges = defaults?.pr_charges ?? 0;
-    const profit = defaults?.profit ?? 0;
-    const nonMemberProfit = defaults?.non_member_profit ?? 0;
+    const isNonAlcoholicLiquorItem =
+      Number(categoryId) === 10 && isExcludedLiquorSubcategory(subCategory);
+    let foodPrCharges = isNonAlcoholicLiquorItem ? 0 : defaults?.food_pr_charges ?? 0;
+    let prCharges = isNonAlcoholicLiquorItem ? 0 : defaults?.pr_charges ?? 0;
+    const profit = isNonAlcoholicLiquorItem ? 0 : defaults?.profit ?? 0;
+    const nonMemberProfit = isNonAlcoholicLiquorItem ? 0 : defaults?.non_member_profit ?? 0;
 
     if (String(prepCharges).toUpperCase() === "N") {
       foodPrCharges = 0;
       prCharges = 0;
     }
 
+    const normalizedAcUnit = acUnit || "Nos";
+    const normalizedPrepCharges = String(prepCharges || "").toUpperCase() === "Y" ? "Y" : "N";
+    const defaultServingVolume = getDefaultServingVolume(subCategory, normalizedAcUnit);
+    const pegs = defaultServingVolume || servingVolume || "";
+
     const sql = `
       INSERT INTO xxafmc_inventory
         (ITEM_ID, ITEM_CODE, ITEM_NAME, DESCRIPTION, CATEGORY_ID, SUB_CATEGORY,
-         \`A/C_UNIT\`, STOCK_QUANTITY, PROFIT, FOOD_PR_CHARGES, NON_MEMBER_PROFIT,
-         PR_CHARGES, CREATION_DATE, CREATED_BY, IMAGE, MIME_TYPE, FILE_NAME)
+         \`A/C_UNIT\`, PEGS, STOCK_QUANTITY, PROFIT, FOOD_PR_CHARGES, NON_MEMBER_PROFIT,
+         PR_CHARGES, FLAG, CREATION_DATE, CREATED_BY, IMAGE, MIME_TYPE, FILE_NAME)
       VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const params = [
@@ -238,15 +282,17 @@ const createItem = async (payload) => {
       description || "",
       Number(categoryId),
       subCategory ? Number(subCategory) : null,
-      acUnit || "Nos",
+      normalizedAcUnit,
+      pegs,
       0,
       profit,
       foodPrCharges,
       nonMemberProfit,
       prCharges,
-      new Date().toISOString(),
+      normalizedPrepCharges,
+      formatToSql(new Date()),
       createdBy || "SYSTEM",
-      null,
+      fileName || null,
       mimeType || null,
       fileName || null,
     ];
@@ -257,7 +303,8 @@ const createItem = async (payload) => {
       item_id: nextId,
       item_code: nextId,
       item_name: itemName,
-      ac_unit: acUnit || "Nos",
+      ac_unit: normalizedAcUnit,
+      pegs,
       stock_quantity: 0,
     };
   } finally {
@@ -307,7 +354,11 @@ const getItemById = async (itemId) => {
       NON_MEMBER_PROFIT,
       PR_CHARGES,
       \`A/C_UNIT\`,
-      STOCK_QUANTITY,
+      (
+  SELECT IFNULL(SUM(xso.STOCK_QUANTITY),0)
+  FROM xxafmc_stock_out xso
+  WHERE xso.ITEM_CODE = xxafmc_inventory.ITEM_CODE
+) AS STOCK_QUANTITY,
       CASE
         WHEN IFNULL(TRIM(IMAGE), '') = '' THEN NULL
         WHEN IMAGE LIKE 'http%' THEN IMAGE
@@ -325,14 +376,17 @@ const getItemById = async (itemId) => {
 };
 
 const getStockOutItemByBarcode = async (barcode, executor = db) => {
+  const normalizedBarcode = sanitizeBarcode(barcode);
   const sql = `
     SELECT
       xit.ITEM_CODE AS item_code,
       xi.ITEM_NAME AS item_name,
+      xit.STOCK AS barcode_qty,
       COALESCE(NULLIF(xit.\`A/C_UNIT\`, ''), NULLIF(xi.\`A/C_UNIT\`, ''), 'Nos') AS ac_unit,
       xit.RATE AS unit_price,
       xit.VOLUME AS volume,
       xit.BATCH_NAME AS batch_name,
+      xit.BATCH_ID AS batch_id,
       IFNULL(xit.PEGS, 0) AS pegs,
       IFNULL(xi.STOCK_QUANTITY, 0) AS available_stock,
       CASE
@@ -352,7 +406,7 @@ const getStockOutItemByBarcode = async (barcode, executor = db) => {
     ORDER BY xit.TRANSACTION_ID DESC
     LIMIT 1
   `;
-  const [rows] = await executor.execute(sql, [Number(barcode)]);
+  const [rows] = await executor.execute(sql, [normalizedBarcode]);
   return rows && rows.length ? rows[0] : null;
 };
 
@@ -370,10 +424,11 @@ const getItemImageInfo = async (itemCode) => {
 const updateItemImage = async ({ itemCode, fileName, mimeType }) => {
   const sql = `
     UPDATE xxafmc_inventory
-    SET FILE_NAME = ?, MIME_TYPE = ?
+    SET IMAGE = ?, FILE_NAME = ?, MIME_TYPE = ?
     WHERE ITEM_CODE = ?
   `;
   const [result] = await db.execute(sql, [
+    fileName || null,
     fileName || null,
     mimeType || null,
     Number(itemCode),
@@ -402,23 +457,25 @@ const barcodeExistsInDb = async (barcode) => {
 };
 
 const stockOutBarcodeExists = async (executor, barcode) => {
+  const normalizedBarcode = sanitizeBarcode(barcode);
   const sql = `
     SELECT COUNT(1) AS cnt
     FROM xxafmc_items_transactions
     WHERE BARCODE = ?
       AND FLAG = 'OUT'
   `;
-  const [rows] = await executor.execute(sql, [Number(barcode)]);
+  const [rows] = await executor.execute(sql, [normalizedBarcode]);
   return Number(rows[0]?.cnt || 0) > 0;
 };
 
 const stockOutRecordExists = async (executor, barcode) => {
+  const normalizedBarcode = sanitizeBarcode(barcode);
   const sql = `
     SELECT COUNT(1) AS cnt
     FROM xxafmc_stock_out
     WHERE BARCODE = ?
   `;
-  const [rows] = await executor.execute(sql, [Number(barcode)]);
+  const [rows] = await executor.execute(sql, [normalizedBarcode]);
   return Number(rows[0]?.cnt || 0) > 0;
 };
 
@@ -430,198 +487,9 @@ const stockOutBarcodeExistsInDb = async (barcode) => {
   return transactionExists || stockOutExists;
 };
 
-const parseVolumeToNumber = (volume) => {
-  if (!volume) return null;
-  const match = String(volume).match(/(\d+(\.\d+)?)/);
-  return match ? Number(match[1]) : null;
-};
-
 const normalizeTransactionDate = (value) => {
-  if (!value) return null;
-  const raw = String(value).trim();
-  if (!raw) return null;
-
-  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
-    return raw;
-  }
-
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
-    const [mm, dd, yyyy] = raw.split("/");
-    return `${yyyy}-${mm}-${dd}`;
-  }
-
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const normalizeReportDate = (value) => normalizeTransactionDate(value);
-
-const calculatePegs = ({ subCategory, typeId, volume, acQuantity }) => {
-  const volumeNumber = parseVolumeToNumber(volume);
-  if (!volumeNumber || !acQuantity) return 0;
-
-  const subCat = Number(subCategory);
-  const type = Number(typeId);
-  const eligibleSubCats = [2, 4, 5, 8, 11, 12, 16, 17];
-  const eligibleTypes = [3, 4, 5, 6];
-
-  if (eligibleSubCats.includes(subCat) || eligibleTypes.includes(type)) {
-    return volumeNumber / acQuantity;
-  }
-
-  if (subCat === 6 && type === 5) {
-    return volumeNumber / acQuantity;
-  }
-
-  return 0;
-};
-
-const addStockTransactions = async (payload) => {
-  const items = Array.isArray(payload) ? payload : [payload];
-
-  const barcodes = items
-    .map((item) => item.barcode)
-    .filter((barcode) => barcode !== undefined && barcode !== null && barcode !== "");
-
-  const uniqueBarcodes = new Set(barcodes);
-  if (uniqueBarcodes.size !== barcodes.length) {
-    const error = new Error("DUPLICATE_BARCODE");
-    error.code = "DUPLICATE_BARCODE";
-    throw error;
-  }
-
-  const connection = await db.getConnection();
-  let transactionLockAcquired = false;
-  try {
-    await connection.beginTransaction();
-    transactionLockAcquired = await acquireNamedLock(connection, ID_LOCKS.transactions);
-    if (!transactionLockAcquired) {
-      throw new Error("Unable to acquire transaction ID lock");
-    }
-
-    for (const barcode of barcodes) {
-      const exists = await barcodeExists(connection, barcode);
-      if (exists) {
-        const error = new Error("DUPLICATE_BARCODE");
-        error.code = "DUPLICATE_BARCODE";
-        throw error;
-      }
-    }
-
-    let nextId = await getTransactionNextId(connection);
-
-    for (const item of items) {
-      const {
-        itemCode,
-        quantity,
-        transactionDate,
-        volume,
-        barcode,
-        rate,
-        batchId,
-        createdBy,
-        acUnit,
-      } = item;
-
-      const normalizedBarcode = sanitizeBarcode(barcode);
-      const numericQuantity = 1;
-
-      if (!validateStockInItem({ ...item, barcode: normalizedBarcode })) {
-        const error = new Error("INVALID_DATA");
-        error.code = "INVALID_DATA";
-        throw error;
-      }
-
-      const normalizedTransactionDate = normalizeTransactionDate(transactionDate);
-      if (!normalizedTransactionDate) {
-        const error = new Error("INVALID_DATA");
-        error.code = "INVALID_DATA";
-        throw error;
-      }
-
-      const inventoryItem = await getInventoryItemByCode(itemCode);
-      if (!inventoryItem) {
-        const error = new Error("ITEM_NOT_FOUND");
-        error.code = "ITEM_NOT_FOUND";
-        throw error;
-      }
-
-      const effectiveAcUnit = acUnit || inventoryItem.ac_unit || "Nos";
-      if (requiresVolume(effectiveAcUnit) && !String(volume || "").trim()) {
-        const error = new Error("INVALID_DATA");
-        error.code = "INVALID_DATA";
-        throw error;
-      }
-      const [barRows] = await connection.execute(
-        "SELECT AC_QUANTITY AS ac_quantity, TYPE_ID AS type_id FROM xxafmc_bar WHERE TYPE = ? LIMIT 1",
-        [effectiveAcUnit]
-      );
-      const barRow = barRows && barRows.length ? barRows[0] : null;
-
-      const pegs = calculatePegs({
-        subCategory: inventoryItem.sub_category,
-        typeId: barRow?.type_id,
-        volume,
-        acQuantity: barRow?.ac_quantity,
-      });
-
-      const batchName = `${inventoryItem.item_name}-${numericQuantity}-${volume || ""}-${transactionDate}`;
-
-      const insertSql = `
-        INSERT INTO xxafmc_items_transactions
-          (TRANSACTION_ID, ITEM_CODE, \`A/C_UNIT\`, RATE, STOCK, BATCH_NAME, VOLUME,
-           TRANSACTION_DATE, FLAG, BATCH_ID, BARCODE, PEGS, CREATED_BY, CREATION_DATE)
-        VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      await connection.execute(insertSql, [
-        nextId,
-        Number(itemCode),
-        effectiveAcUnit,
-        Number(rate),
-        numericQuantity,
-        batchName,
-        volume || "",
-        normalizedTransactionDate,
-        "IN",
-        batchId || "",
-        normalizedBarcode,
-        Math.round(Number(pegs || 0)),
-        createdBy || "SYSTEM",
-        new Date().toISOString(),
-      ]);
-
-      const updateSql = `
-        UPDATE xxafmc_inventory
-        SET STOCK_QUANTITY = IFNULL(STOCK_QUANTITY, 0) + ?,
-            UNIT_PRICE = ?
-        WHERE ITEM_CODE = ?
-      `;
-      await connection.execute(updateSql, [
-        numericQuantity,
-        Number(rate),
-        Number(itemCode),
-      ]);
-
-      nextId += 1;
-    }
-
-    await connection.commit();
-    return { count: items.length };
-  } catch (error) {
-    await connection.rollback();
-    throw error;
-  } finally {
-    if (transactionLockAcquired) {
-      await releaseNamedLock(connection, ID_LOCKS.transactions);
-    }
-    connection.release();
-  }
+  const parsed = parseDate(value);
+  return parsed ? parsed.toISOString().split('T')[0] : null;
 };
 
 const getStockOutNextId = async (connection) => {
@@ -669,7 +537,7 @@ const addStockOutTransactions = async (payload) => {
         createdBy,
       } = item;
 
-      const numericBarcode = Number(barcode);
+      const normalizedBarcode = sanitizeBarcode(barcode);
       const numericQuantity = Number(quantity);
       const normalizedTransactionDate = normalizeTransactionDate(transactionDate);
 
@@ -679,7 +547,7 @@ const addStockOutTransactions = async (payload) => {
         throw error;
       }
 
-      const stockItem = await getStockOutItemByBarcode(numericBarcode, connection);
+      const stockItem = await getStockOutItemByBarcode(normalizedBarcode, connection);
       if (!stockItem) {
         const error = new Error("ITEM_NOT_FOUND");
         error.code = "ITEM_NOT_FOUND";
@@ -687,8 +555,8 @@ const addStockOutTransactions = async (payload) => {
       }
 
       const [alreadyConsumedByTxn, alreadyConsumedByStockOut] = await Promise.all([
-        stockOutBarcodeExists(connection, numericBarcode),
-        stockOutRecordExists(connection, numericBarcode),
+        stockOutBarcodeExists(connection, normalizedBarcode),
+        stockOutRecordExists(connection, normalizedBarcode),
       ]);
       const alreadyConsumed = alreadyConsumedByTxn || alreadyConsumedByStockOut;
       if (alreadyConsumed) {
@@ -697,8 +565,7 @@ const addStockOutTransactions = async (payload) => {
         throw error;
       }
 
-      const divisor = Number(stockItem.pegs) > 0 ? Number(stockItem.pegs) : 1;
-      const inventoryDelta = numericQuantity / divisor;
+      const inventoryDelta = numericQuantity;
 
       if (Number(stockItem.available_stock || 0) < inventoryDelta) {
         const error = new Error("INSUFFICIENT_STOCK");
@@ -706,8 +573,10 @@ const addStockOutTransactions = async (payload) => {
         throw error;
       }
 
-      const totalValue = Number(stockItem.unit_price || 0) * numericQuantity;
-      const creationTimestamp = new Date().toISOString();
+      const bottlePrice = Number(stockItem.unit_price || 0);
+      const stockOutQuantity = numericQuantity;
+      const totalValue = bottlePrice * stockOutQuantity;
+      const creationTimestamp = formatToSql(new Date());
 
       await connection.execute(
         `
@@ -723,9 +592,9 @@ const addStockOutTransactions = async (payload) => {
           stockItem.item_name,
           Number(stockItem.item_code),
           Number(stockItem.unit_price || 0),
-          numericQuantity,
+          stockOutQuantity,
           totalValue,
-          numericBarcode,
+          normalizedBarcode,
           creationTimestamp,
           Number(stockItem.pegs || 0),
           stockItem.ac_unit || "Nos",
@@ -742,23 +611,24 @@ const addStockOutTransactions = async (payload) => {
           INSERT INTO xxafmc_items_transactions
             (TRANSACTION_ID, ITEM_CODE, \`A/C_UNIT\`, RATE, STOCK, TOTAL_VALUE,
              PEGS, VOLUME, BATCH_NAME, TRANSACTION_DATE, FLAG, BARCODE,
-             CREATED_BY, CREATION_DATE)
+             BATCH_ID, CREATED_BY, CREATION_DATE)
           VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           nextTransactionId,
           Number(stockItem.item_code),
           stockItem.ac_unit || "Nos",
           Number(stockItem.unit_price || 0),
-          numericQuantity,
+          stockOutQuantity,
           totalValue,
           Number(stockItem.pegs || 0),
           stockItem.volume || "",
           stockItem.batch_name || "",
           normalizedTransactionDate,
           "OUT",
-          numericBarcode,
+          normalizedBarcode,
+          stockItem.batch_id || "",
           createdBy || "SYSTEM",
           creationTimestamp,
         ]
@@ -777,6 +647,10 @@ const addStockOutTransactions = async (payload) => {
       nextTransactionId += 1;
     }
 
+    await connection.execute(
+      "DELETE FROM xxafmc_items_transactions WHERE ITEM_CODE IS NULL AND FLAG = 'OUT'"
+    );
+
     await connection.commit();
     return { count: items.length };
   } catch (error) {
@@ -793,52 +667,183 @@ const addStockOutTransactions = async (payload) => {
   }
 };
 
-const getStockInReport = async ({ fromDate, toDate }) => {
-  const normalizedFrom = normalizeReportDate(fromDate);
-  const normalizedTo = normalizeReportDate(toDate);
+const normalizeAcUnit = (value) => {
+  const unit = String(value || "").trim().toLowerCase();
+  if (unit.includes("can")) return "Can";
+  if (unit.includes("peg")) return "Pegs";
+  return "Nos";
+};
+
+const mapAcUnitRows = (rows) =>
+  rows.map((row) => ({
+    ...row,
+    ac_unit: normalizeAcUnit(row.ac_unit),
+  }));
+
+const getStockInReport = async ({ fromDate, toDate, search, limit, offset }) => {
+  const start = getStartOfDay(fromDate);
+  const end = getEndOfDay(toDate);
+  const searchPattern = `%${String(search || "").trim()}%`;
+  const limitNumber = Number(limit);
+  const offsetNumber = Number(offset);
+  const hasPagination =
+    Number.isInteger(limitNumber) &&
+    limitNumber > 0 &&
+    Number.isInteger(offsetNumber) &&
+    offsetNumber >= 0;
   const sql = `
     SELECT
       XIT.ITEM_CODE AS item_code,
       XI.ITEM_NAME AS item_name,
-      XIT.BATCH_ID AS batch_id,
       COALESCE(NULLIF(XI.\`A/C_UNIT\`, ''), 'Nos') AS ac_unit,
       SUM(XIT.STOCK) AS stock,
-      ROUND(SUM(IFNULL(XIT.RATE, 0) * IFNULL(XIT.STOCK, 0)), 2) AS total_price,
+      ROUND(SUM(IFNULL(XIT.RATE, 0)), 2) AS total_price,
+      MIN(XIT.TRANSACTION_DATE) AS transaction_date,
       MIN(XIT.CREATION_DATE) AS creation_date
     FROM xxafmc_items_transactions XIT
     JOIN xxafmc_inventory XI ON XIT.ITEM_CODE = XI.ITEM_CODE
-    WHERE DATE(XIT.TRANSACTION_DATE) BETWEEN COALESCE(?, CURDATE())
-      AND COALESCE(?, CURDATE())
+    WHERE XIT.TRANSACTION_DATE >= ? AND XIT.TRANSACTION_DATE <= ?
       AND XIT.FLAG = 'IN'
       AND XI.SUB_CATEGORY NOT IN (14, 15)
-    GROUP BY XIT.ITEM_CODE, XI.ITEM_NAME, XIT.BATCH_ID, XI.\`A/C_UNIT\`
+      AND (XI.ITEM_NAME LIKE ? OR CAST(XIT.ITEM_CODE AS CHAR) LIKE ?)
+    GROUP BY XIT.ITEM_CODE, XI.ITEM_NAME, XI.\`A/C_UNIT\`
     ORDER BY creation_date DESC
+    ${hasPagination ? `LIMIT ${limitNumber} OFFSET ${offsetNumber}` : ""}
   `;
-  const [rows] = await db.execute(sql, [normalizedFrom, normalizedTo]);
-  return rows;
+  const [rows] = await db.execute(sql, [start, end, searchPattern, searchPattern]);
+  return mapAcUnitRows(rows);
+};
+// ROUND(SUM(IFNULL(XIT.RATE, 0) * IFNULL(XIT.STOCK, 0)), 2) AS total_price,
+
+const getStockInReportSummary = async ({ fromDate, toDate, search }) => {
+  const start = getStartOfDay(fromDate);
+  const end = getEndOfDay(toDate);
+  const searchPattern = `%${String(search || "").trim()}%`;
+  const sql = `
+    SELECT
+      IFNULL(SUM(XIT.STOCK), 0) AS total_stock,
+      ROUND(SUM(IFNULL(XIT.RATE, 0)), 2) AS total_price
+    FROM xxafmc_items_transactions XIT
+    JOIN xxafmc_inventory XI ON XIT.ITEM_CODE = XI.ITEM_CODE
+    WHERE XIT.TRANSACTION_DATE >= ? AND XIT.TRANSACTION_DATE <= ?
+      AND XIT.FLAG = 'IN'
+      AND XI.SUB_CATEGORY NOT IN (14, 15)
+      AND (XI.ITEM_NAME LIKE ? OR CAST(XIT.ITEM_CODE AS CHAR) LIKE ?)
+  `;
+  const [rows] = await db.execute(sql, [start, end, searchPattern, searchPattern]);
+  return rows[0] || { total_stock: 0, total_price: 0 };
 };
 
-const getStockOutReport = async ({ fromDate, toDate }) => {
-  const normalizedFrom = normalizeReportDate(fromDate);
-  const normalizedTo = normalizeReportDate(toDate);
+const getStockOutReport = async ({ fromDate, toDate, search, limit, offset }) => {
+  const start = getStartOfDay(fromDate);
+  const end = getEndOfDay(toDate);
+  const searchPattern = `%${String(search || "").trim()}%`;
+  const limitNumber = Number(limit);
+  const offsetNumber = Number(offset);
+  const hasPagination =
+    Number.isInteger(limitNumber) &&
+    limitNumber > 0 &&
+    Number.isInteger(offsetNumber) &&
+    offsetNumber >= 0;
   const sql = `
     SELECT
       XSO.ITEM_CODE AS item_code,
       XSO.ITEM_NAME AS item_name,
       SUM(XSO.STOCK_QUANTITY) AS stock,
-      ROUND(SUM(IFNULL(XSO.TOTAL_VALUE, 0)), 2) AS total_price,
+      ROUND(SUM(
+        CASE
+          WHEN UPPER(XSO.\`A/C_UNIT\`) = 'NOS' AND XSO.STOCK_QUANTITY > 0
+            THEN IFNULL(XSO.UNIT_PRICE, 0)
+          ELSE ROUND(
+            (IFNULL(XSO.UNIT_PRICE, 0) / IFNULL(NULLIF(XSO.PEGS, 0), 1))
+            * IFNULL(XSO.STOCK_QUANTITY, XSO.PEGS),
+            2
+          )
+        END
+      ), 2) AS total_price,
       MIN(XSO.CREATION_DATE) AS creation_date,
       COALESCE(NULLIF(XI.\`A/C_UNIT\`, ''), 'Nos') AS ac_unit
     FROM xxafmc_stock_out XSO
     JOIN xxafmc_inventory XI ON XSO.ITEM_CODE = XI.ITEM_CODE
-    WHERE DATE(XSO.CREATION_DATE) BETWEEN COALESCE(?, CURDATE())
-      AND COALESCE(?, CURDATE())
+    WHERE XSO.CREATION_DATE >= ? AND XSO.CREATION_DATE <= ?
+      AND (XSO.ITEM_NAME LIKE ? OR CAST(XSO.ITEM_CODE AS CHAR) LIKE ?)
     GROUP BY XSO.ITEM_NAME, XSO.ITEM_CODE, XI.\`A/C_UNIT\`
     ORDER BY creation_date DESC
+    ${hasPagination ? `LIMIT ${limitNumber} OFFSET ${offsetNumber}` : ""}
   `;
-  const [rows] = await db.execute(sql, [normalizedFrom, normalizedTo]);
+  const [rows] = await db.execute(sql, [start, end, searchPattern, searchPattern]);
+  return mapAcUnitRows(rows);
+};
+
+const getStockOutReportSummary = async ({ fromDate, toDate, search }) => {
+  const start = getStartOfDay(fromDate);
+  const end = getEndOfDay(toDate);
+  const searchPattern = `%${String(search || "").trim()}%`;
+  const sql = `
+    SELECT
+      IFNULL(SUM(XSO.STOCK_QUANTITY), 0) AS total_stock,
+      ROUND(SUM(
+        CASE
+          WHEN UPPER(XSO.\`A/C_UNIT\`) = 'NOS' AND XSO.STOCK_QUANTITY > 0
+            THEN IFNULL(XSO.UNIT_PRICE, 0)
+          ELSE ROUND(
+            (IFNULL(XSO.UNIT_PRICE, 0) / IFNULL(NULLIF(XSO.PEGS, 0), 1))
+            * IFNULL(XSO.STOCK_QUANTITY, XSO.PEGS),
+            2
+          )
+        END
+      ), 2) AS total_price
+    FROM xxafmc_stock_out XSO
+    JOIN xxafmc_inventory XI ON XSO.ITEM_CODE = XI.ITEM_CODE
+    WHERE XSO.CREATION_DATE >= ? AND XSO.CREATION_DATE <= ?
+      AND (XSO.ITEM_NAME LIKE ? OR CAST(XSO.ITEM_CODE AS CHAR) LIKE ?)
+  `;
+  const [rows] = await db.execute(sql, [start, end, searchPattern, searchPattern]);
+  return rows[0] || { total_stock: 0, total_price: 0 };
+};
+
+const getTodayStockOutDetails = async () => {
+  const sql = `
+    SELECT
+      ITEM_ID,
+      ROUND(STOCK_QUANTITY) AS stock_quantity,
+      ITEM_NAME,
+      UNIT_PRICE,
+      CREATION_DATE,
+      CREATED_BY,
+      LAST_UPDATE_DATE,
+      LAST_UPDATED_BY,
+      ITEM_CODE,
+      \`A/C_UNIT\` AS ac_unit,
+      PEGS,
+      BOTTLES,
+      TOTAL_VALUE,
+      volume,
+      batch_name,
+      type,
+      BARCODE
+    FROM xxafmc_stock_out
+    WHERE DATE(CREATION_DATE) = CURDATE()
+      AND ITEM_CODE IS NOT NULL
+    ORDER BY CREATION_DATE DESC
+  `;
+  const [rows] = await db.execute(sql);
   return rows;
 };
+
+
+const updateItemStatus = async (itemCode, status) => {
+  const sql = `
+    UPDATE xxafmc_inventory
+    SET status = ?
+    WHERE item_code = ?
+  `;
+
+  const [result] = await db.execute(sql, [status.toUpperCase(), itemCode]);
+
+  return result.affectedRows;
+};
+
 
 module.exports = {
   getInventoryList,
@@ -851,12 +856,13 @@ module.exports = {
   getStockOutItemByBarcode,
   barcodeExistsInDb,
   stockOutBarcodeExistsInDb,
-  addStockTransactions,
   addStockOutTransactions,
   getItemImageInfo,
   updateItemImage,
   getStockInReport,
+  getStockInReportSummary,
   getStockOutReport,
+  getStockOutReportSummary,
+  getTodayStockOutDetails,
+  updateItemStatus,
 };
-
-

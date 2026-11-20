@@ -8,8 +8,13 @@ import {
 import { useNavigate } from "react-router-dom";
 import ChangePasswordModal from "./ChangePasswordModal";
 import { useAuth } from "../../context/AuthContext";
+import { clearAuthData } from "../../utils/authStorage";
 
-export default function UserMenuDropdown({ username }) {
+export default function UserMenuDropdown({
+  username,
+  compact = false,
+  iconOnly = false,
+}) {
   const [open, setOpen] = useState(false);
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
 
@@ -18,11 +23,13 @@ export default function UserMenuDropdown({ username }) {
 
   const dropdownRef = useRef(null);
 
-  const displayName = username || user?.username || "User";
+  const fullName = username || user?.username || "User";
+
+  const displayName = fullName;
 
   // Logout
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    clearAuthData();
     clearUser();
     navigate("/login");
   };
@@ -38,9 +45,17 @@ export default function UserMenuDropdown({ username }) {
       }
     };
 
-    document.addEventListener("mousedown", handleOutsideClick);
-    return () =>
-      document.removeEventListener("mousedown", handleOutsideClick);
+    document.addEventListener(
+      "mousedown",
+      handleOutsideClick
+    );
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        handleOutsideClick
+      );
+    };
   }, []);
 
   return (
@@ -48,18 +63,30 @@ export default function UserMenuDropdown({ username }) {
       {/* User Button */}
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 bg-gray-100 hover:bg-afmc-maroon/10 px-4 py-2 rounded-xl transition"
+        className={`flex items-center bg-gray-100 hover:bg-afmc-maroon/10 rounded-xl transition min-w-0 ${
+          iconOnly ? "justify-center px-3 py-3" : "gap-2 px-3 py-2 sm:px-4"
+        }`}
       >
-        <FaUserCircle className="text-xl text-afmc-maroon" />
-        <span className="font-medium text-gray-800">
-          {displayName}
-        </span>
-        <FaChevronDown className="text-sm text-gray-500" />
+        <FaUserCircle className="text-xl text-afmc-maroon flex-shrink-0" />
+
+        {!iconOnly && (
+          <>
+            <span
+              className={`font-medium text-gray-800 text-sm sm:text-base truncate ${
+                compact ? "max-w-[70px]" : "max-w-[130px]"
+              }`}
+            >
+              {displayName}
+            </span>
+
+            <FaChevronDown className="text-sm text-gray-500 flex-shrink-0" />
+          </>
+        )}
       </button>
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-xl border z-50 overflow-hidden">
+        <div className="absolute right-0 mt-2 w-52 max-w-[90vw] bg-white rounded-xl shadow-xl border z-50 overflow-hidden">
           <button
             onClick={() => {
               setPasswordModalOpen(true);

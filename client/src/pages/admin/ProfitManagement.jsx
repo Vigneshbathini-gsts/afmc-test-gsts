@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
 import { FaArrowLeft } from "react-icons/fa";
 import { profitAPI } from "../../services/api";
 
@@ -30,7 +31,7 @@ export default function ProfitManagement() {
             setReportData(res.data.data || []);
         } catch (error) {
             console.error("Error fetching pricing report:", error);
-            alert("Failed to load pricing report");
+            toast.error("Failed to load pricing report");
         } finally {
             setLoading(false);
         }
@@ -52,16 +53,15 @@ export default function ProfitManagement() {
         e.preventDefault();
 
         try {
-            await profitAPI.updateMemberPricing({
+            const payload = {
                 category: memberForm.category,
-                profit: Number(memberForm.profit),
-                foodPrCharges:
-                    memberForm.category === "Snacks"
-                        ? Number(memberForm.foodPrCharges || 0)
-                        : 0,
-            });
+                profit: memberForm.category === "Liquor" ? Number(memberForm.profit) : 0,
+                foodPrCharges: memberForm.category === "Snacks" ? Number(memberForm.foodPrCharges || 0) : 0,
+            };
 
-            alert("Member pricing updated successfully");
+            await profitAPI.updateMemberPricing(payload);
+
+            toast.success("Member pricing updated successfully");
             setMemberForm({
                 category: "Liquor",
                 profit: "",
@@ -70,7 +70,7 @@ export default function ProfitManagement() {
             fetchReport();
         } catch (error) {
             console.error(error);
-            alert(error?.response?.data?.message || "Failed to update member pricing");
+            toast.error(error?.response?.data?.message || "Failed to update member pricing");
         }
     };
 
@@ -78,16 +78,15 @@ export default function ProfitManagement() {
         e.preventDefault();
 
         try {
-            await profitAPI.updateNonMemberPricing({
+            const payload = {
                 category: nonMemberForm.category,
-                profit: Number(nonMemberForm.profit),
-                prCharges:
-                    nonMemberForm.category === "Snacks"
-                        ? Number(nonMemberForm.prCharges || 0)
-                        : 0,
-            });
+                profit: nonMemberForm.category === "Liquor" ? Number(nonMemberForm.profit) : 0,
+                prCharges: nonMemberForm.category === "Snacks" ? Number(nonMemberForm.prCharges || 0) : 0,
+            };
 
-            alert("Non-member pricing updated successfully");
+            await profitAPI.updateNonMemberPricing(payload);
+
+            toast.success("Non-member pricing updated successfully");
             setNonMemberForm({
                 category: "Liquor",
                 profit: "",
@@ -96,234 +95,280 @@ export default function ProfitManagement() {
             fetchReport();
         } catch (error) {
             console.error(error);
-            alert(
+            toast.error(
                 error?.response?.data?.message || "Failed to update non-member pricing"
             );
         }
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-afmc-bg via-white to-afmc-bg2 relative">
-            <div className="absolute top-16 left-12 w-72 h-72 bg-afmc-maroon/10 rounded-full blur-3xl"></div>
-            <div className="absolute bottom-20 right-20 w-80 h-80 bg-afmc-maroon2/10 rounded-full blur-3xl"></div>
+      <div className="min-h-screen bg-gradient-to-br from-afmc-bg via-white to-afmc-bg2 relative">
+        <div className="absolute top-16 left-12 w-72 h-72 bg-afmc-maroon/10 rounded-full blur-3xl"></div>
+        <div className="absolute bottom-20 right-20 w-80 h-80 bg-afmc-maroon2/10 rounded-full blur-3xl"></div>
 
-            <div className="p-6 md:p-8 relative z-10">
-                <div className="flex items-center justify-between mb-6 md:mb-8">
-                    <h1 className="text-2xl font-semibold text-afmc-maroon">
-                        Profit Management
-                    </h1>
-                    <button
-                        type="button"
-                        onClick={() => navigate("/admin/dashboard")}
-                        className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition"
-                    >
-                        <FaArrowLeft />
-                        Go To Dashboard
-                    </button>
+        <div className="px-0 py-4 md:p-8 relative z-10">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6 md:mb-8">
+            <h1 className="text-2xl font-semibold text-afmc-maroon">
+              Profit Management
+            </h1>
+            <button
+              type="button"
+              onClick={() => navigate("/admin/dashboard")}
+              className="self-end sm:self-auto inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition max-w-max"
+            >
+              <FaArrowLeft />
+              Go To Dashboard
+            </button>
+          </div>
+
+          <div className="bg-white/80 border border-afmc-gold/15 rounded-3xl shadow-xl backdrop-blur-sm p-5 md:p-6 mb-6">
+            <div className="mb-5 md:mb-6 h-1 w-full rounded-full bg-gradient-to-r from-afmc-maroon via-afmc-gold to-afmc-maroon2" />
+
+            <div className="grid md:grid-cols-2 gap-5 md:gap-6">
+              {/* Member Pricing */}
+              <form
+                onSubmit={handleMemberSubmit}
+                className="bg-white/70 border border-white/60 rounded-3xl shadow-lg backdrop-blur-sm p-5"
+              >
+                <h2 className="text-lg font-semibold text-slate-700 mb-3">
+                  Member Profit Setup
+                </h2>
+
+                <div className="mb-3">
+                  <label className="block mb-1 text-sm font-medium text-slate-700">
+                    Category
+                  </label>
+                  <select
+                    name="category"
+                    value={memberForm.category}
+                    onChange={handleMemberChange}
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                  >
+                    {categoryOptions.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                <div className="bg-white/80 border border-afmc-gold/15 rounded-3xl shadow-xl backdrop-blur-sm p-5 md:p-6 mb-6">
-                    <div className="mb-5 md:mb-6 h-1 w-full rounded-full bg-gradient-to-r from-afmc-maroon via-afmc-gold to-afmc-maroon2" />
+                {/* Profit field - Only for Liquor */}
+                {memberForm.category === "Liquor" && (
+                  <div className="mb-3">
+                    <label className="block mb-1 text-sm font-medium text-slate-700">
+                      Member Profit
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      name="profit"
+                      value={memberForm.profit}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value.length <= 5 && /^\d*\.?\d*$/.test(value)) {
+                          handleMemberChange(e);
+                        }
+                      }}
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                      required
+                      min="0"
+                      placeholder="Enter profit percentage (e.g 10)"
+                    />
+                  </div>
+                )}
 
-                    <div className="grid md:grid-cols-2 gap-5 md:gap-6">
-                        {/* Member Pricing */}
-                        <form
-                            onSubmit={handleMemberSubmit}
-                            className="bg-white/70 border border-white/60 rounded-3xl shadow-lg backdrop-blur-sm p-5"
-                        >
-                            <h2 className="text-lg font-semibold text-slate-700 mb-3">
-                                Member Profit Setup
-                            </h2>
+                {/* Food PR Charges - Only for Snacks */}
+                {memberForm.category === "Snacks" && (
+                  <div className="mb-3">
+                    <label className="block mb-1 text-sm font-medium text-slate-700">
+                      Food PR Charges
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      name="foodPrCharges"
+                      value={memberForm.foodPrCharges}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (
+                          value.length <= 5 &&
+                          /^\d*\.?\d{0,2}$/.test(value)
+                        ) {
+                          handleMemberChange(e);
+                        }
+                      }}
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                      placeholder="Enter Food PR Charges"
+                      required
+                    />
+                  </div>
+                )}
 
-                            <div className="mb-3">
-                                <label className="block mb-1 text-sm font-medium text-slate-700">
-                                    Category
-                                </label>
-                                <select
-                                    name="category"
-                                    value={memberForm.category}
-                                    onChange={handleMemberChange}
-                                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                                >
-                                    {categoryOptions.map((cat) => (
-                                        <option key={cat} value={cat}>
-                                            {cat}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
+                <button
+                  type="submit"
+                  className="px-6 py-3 rounded-2xl bg-afmc-maroon hover:bg-afmc-maroon2 text-white text-sm font-semibold shadow hover:shadow-md transition"
+                >
+                  Save
+                </button>
+              </form>
 
-                            <div className="mb-3">
-                                <label className="block mb-1 text-sm font-medium text-slate-700">
-                                    Profit
-                                </label>
-                                <input
-                                    type="number"
-                                    name="profit"
-                                    value={memberForm.profit}
-                                    onChange={handleMemberChange}
-                                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                                    required
-                                    min="0"
-                                />
-                            </div>
+              {/* Non Member Pricing */}
+              <form
+                onSubmit={handleNonMemberSubmit}
+                className="bg-white/70 border border-white/60 rounded-3xl shadow-lg backdrop-blur-sm p-5"
+              >
+                <h2 className="text-lg font-semibold text-slate-700 mb-3">
+                  Non-Member Profit Setup
+                </h2>
 
-                            {memberForm.category === "Snacks" && (
-                                <div className="mb-3">
-                                    <label className="block mb-1 text-sm font-medium text-slate-700">
-                                        Food PR Charges
-                                    </label>
-                                    <input
-                                        type="number"
-                                        name="foodPrCharges"
-                                        value={memberForm.foodPrCharges}
-                                        onChange={handleMemberChange}
-                                        className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                                        min="0"
-                                    />
-                                </div>
-                            )}
-
-                            <button
-                                type="submit"
-                                className="px-6 py-3 rounded-2xl bg-afmc-maroon hover:bg-afmc-maroon2 text-white text-sm font-semibold shadow hover:shadow-md transition"
-                            >
-                                Update Member
-                            </button>
-                        </form>
-
-                        {/* Non Member Pricing */}
-                        <form
-                            onSubmit={handleNonMemberSubmit}
-                            className="bg-white/70 border border-white/60 rounded-3xl shadow-lg backdrop-blur-sm p-5"
-                        >
-                            <h2 className="text-lg font-semibold text-slate-700 mb-3">
-                                Non-Member Profit Setup
-                            </h2>
-
-                            <div className="mb-3">
-                                <label className="block mb-1 text-sm font-medium text-slate-700">
-                                    Category
-                                </label>
-                                <select
-                                    name="category"
-                                    value={nonMemberForm.category}
-                                    onChange={handleNonMemberChange}
-                                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                                >
-                                    {categoryOptions.map((cat) => (
-                                        <option key={cat} value={cat}>
-                                            {cat}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="mb-3">
-                                <label className="block mb-1 text-sm font-medium text-slate-700">
-                                    Non-Member Profit
-                                </label>
-                                <input
-                                    type="number"
-                                    name="profit"
-                                    min="0"
-                                    value={nonMemberForm.profit}
-                                    onChange={handleNonMemberChange}
-                                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                                    required
-                                />
-                            </div>
-
-                            {nonMemberForm.category === "Snacks" && (
-                                <div className="mb-3">
-                                    <label className="block mb-1 text-sm font-medium text-slate-700">
-                                        PR Charges
-                                    </label>
-                                    <input
-                                        type="number"
-                                        name="prCharges"
-                                        min="0"
-                                        value={nonMemberForm.prCharges}
-                                        onChange={handleNonMemberChange}
-                                        className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                                    />
-                                </div>
-                            )}
-
-                            <button
-                                type="submit"
-                                className="px-6 py-3 rounded-2xl bg-[#5b5b5b] text-white text-sm font-semibold shadow hover:shadow-md transition"
-                            >
-                                Update Non-Member
-                            </button>
-                        </form>
-                    </div>
+                <div className="mb-3">
+                  <label className="block mb-1 text-sm font-medium text-slate-700">
+                    Category
+                  </label>
+                  <select
+                    name="category"
+                    value={nonMemberForm.category}
+                    onChange={handleNonMemberChange}
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                  >
+                    {categoryOptions.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                {/* Report Section */}
-                <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm p-6">
-                    <h2 className="text-lg font-semibold text-slate-700 mb-3">
-                        Profit Report
-                    </h2>
+                {/* Profit field - Only for Liquor */}
+                {nonMemberForm.category === "Liquor" && (
+                  <div className="mb-3">
+                    <label className="block mb-1 text-sm font-medium text-slate-700">
+                      Non-Member Profit
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      name="profit"
+                      value={nonMemberForm.profit}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (
+                          value.length <= 5 &&
+                          /^\d*\.?\d{0,2}$/.test(value)
+                        ) {
+                          handleNonMemberChange(e);
+                        }
+                      }}
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                      required
+                      placeholder="Enter profit percentage (e.g 10)"
+                    />
+                  </div>
+                )}
 
-                    {loading ? (
-                        <p className="text-sm text-slate-600">Loading report...</p>
-                    ) : (
-                        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm">
-                                    <thead className="bg-gray-50 text-gray-600">
-                                        <tr>
-                                            <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                                                Category
-                                            </th>
-                                            <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                                                Member Profit
-                                            </th>
-                                            <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                                                Food PR Charges
-                                            </th>
-                                            <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                                                Non-Member Profit
-                                            </th>
-                                            <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                                                PR Charges
-                                            </th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {reportData.length > 0 ? (
-                                            reportData.map((row, index) => (
-                                                <tr
-                                                    key={index}
-                                                    className="border-t border-gray-100 hover:bg-gray-50"
-                                                >
-                                                    <td className="px-4 py-3 capitalize">
-                                                        {row.category_name}
-                                                    </td>
-                                                    <td className="px-4 py-3">{row.PROFIT}</td>
-                                                    <td className="px-4 py-3">{row.FOOD_PR_CHARGES}</td>
-                                                    <td className="px-4 py-3">{row.NON_MEMBER_PROFIT}</td>
-                                                    <td className="px-4 py-3">{row.PR_CHARGES}</td>
-                                                </tr>
-                                            ))
-                                        ) : (
-                                            <tr className="border-t border-gray-100">
-                                                <td
-                                                    colSpan="5"
-                                                    className="px-4 py-6 text-center text-gray-500"
-                                                >
-                                                    No records found.
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    )}
-                </div>
+                {/* PR Charges - Only for Snacks */}
+                {nonMemberForm.category === "Snacks" && (
+                  <div className="mb-3">
+                    <label className="block mb-1 text-sm font-medium text-slate-700">
+                      Food PR Charges
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      name="prCharges"
+                      value={nonMemberForm.prCharges}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (
+                          value.length <= 5 &&
+                          /^\d*\.?\d{0,2}$/.test(value)
+                        ) {
+                          handleNonMemberChange(e);
+                        }
+                      }}
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                      placeholder="Enter PR Charges"
+                      required
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  className="px-6 py-3 rounded-2xl bg-[#5b5b5b] text-white text-sm font-semibold shadow hover:shadow-md transition"
+                >
+                  Save
+                </button>
+              </form>
             </div>
+          </div>
+
+          {/* Report Section */}
+          <div className="bg-white/80 border border-white/60 rounded-3xl shadow-xl backdrop-blur-sm p-6">
+            <h2 className="text-lg font-semibold text-slate-700 mb-3">
+              Profit Report
+            </h2>
+
+            {loading ? (
+              <p className="text-sm text-slate-600">Loading report...</p>
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-gray-600">
+                      <tr>
+                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                          Category
+                        </th>
+                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                          Member Profit
+                        </th>
+                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                          Food PR Charges
+                        </th>
+                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                          Non-Member Profit
+                        </th>
+                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                          Food PR Charges
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reportData.length > 0 ? (
+                        reportData.map((row, index) => (
+                          <tr
+                            key={index}
+                            className="border-t border-gray-100 hover:bg-gray-50"
+                          >
+                            <td className="px-4 py-3 capitalize">
+                              {row.category_name}
+                            </td>
+                            <td className="px-4 py-3">{row.PROFIT}</td>
+                            <td className="px-4 py-3">{row.FOOD_PR_CHARGES}</td>
+                            <td className="px-4 py-3">
+                              {row.NON_MEMBER_PROFIT}
+                            </td>
+                            <td className="px-4 py-3">{row.PR_CHARGES}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr className="border-t border-gray-100">
+                          <td
+                            colSpan="5"
+                            className="px-4 py-6 text-center text-gray-500"
+                          >
+                            No records found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+      </div>
     );
 }

@@ -6,11 +6,13 @@ const upload = require("../utils/uploadMiddleware");
 
 exports.getInventory = async (req, res) => {
   try {
-    const { categoryId, itemCode, q } = req.query;
+    const { categoryId, itemCode, q, limit, offset } = req.query;
     const items = await inventoryModel.getInventoryList({
       categoryId,
       itemCode,
       search: q,
+      limit,
+      offset,
     });
     res.status(200).json({ success: true, data: items });
   } catch (error) {
@@ -59,6 +61,7 @@ exports.createItem = async (req, res) => {
       categoryId,
       subCategory,
       acUnit,
+      servingVolume,
       prepCharges,
       createdBy,
     } = req.body;
@@ -70,6 +73,13 @@ exports.createItem = async (req, res) => {
       });
     }
 
+    if (!subCategory) {
+      return res.status(400).json({
+        success: false,
+        message: "Sub category is required",
+      });
+    }
+
     const file = req.file;
 
     const newItem = await inventoryModel.createItem({
@@ -78,6 +88,7 @@ exports.createItem = async (req, res) => {
       categoryId,
       subCategory,
       acUnit,
+      servingVolume,
       prepCharges,
       createdBy,
       fileName: file?.filename,
@@ -87,6 +98,12 @@ exports.createItem = async (req, res) => {
     res.status(201).json({ success: true, data: newItem });
   } catch (error) {
     console.error("Error creating item:", error);
+    if (error.code === "INVALID_SUB_CATEGORY") {
+      return res.status(400).json({
+        success: false,
+        message: "Selected sub category does not belong to the selected category",
+      });
+    }
     res.status(500).json({ success: false, message: "Failed to create item" });
   }
 };
@@ -104,13 +121,14 @@ exports.getBarTypes = async (_req, res) => {
 exports.getItemById = async (req, res) => {
   try {
     const { id } = req.params;
+    // console.log("Fetching item with ID:", id);
     if (!id) {
       return res.status(400).json({ success: false, message: "Item ID is required" });
     }
 
     // First try to get as cocktail/mocktail
     let item = await cocktailModel.getCocktailItemById(id);
-    
+    // console.log("Fetched item from cocktail model:", item);
     // If not found as cocktail, try regular inventory item
     if (!item) {
       item = await inventoryModel.getItemById(id);
@@ -124,6 +142,48 @@ exports.getItemById = async (req, res) => {
   } catch (error) {
     console.error("Error fetching item:", error);
     res.status(500).json({ success: false, message: "Failed to load item" });
+  }
+};
+
+exports.getCustomerItemById = async (req, res) => {
+  try {
+    const itemId = Number(req.params.id);
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      return res.status(400).json({ success: false, message: "Valid item ID is required" });
+    }
+
+    let item = await cocktailModel.getCocktailItemById(itemId);
+    if (!item) {
+      item = await inventoryModel.getItemById(itemId);
+    }
+
+    if (!item) {
+      return res.status(404).json({ success: false, message: "Item not found" });
+    }
+
+    const customerItem = {
+      ITEM_ID: item.ITEM_ID,
+      ITEM_NAME: item.ITEM_NAME,
+      DESCRIPTION: item.DESCRIPTION,
+      ITEM_CODE: item.ITEM_CODE,
+      CATEGORY_ID: item.CATEGORY_ID,
+      SUB_CATEGORY: item.SUB_CATEGORY,
+      UNIT_PRICE: item.UNIT_PRICE,
+      FOOD_PR_CHARGES: item.FOOD_PR_CHARGES,
+      PR_CHARGES: item.PR_CHARGES,
+      "A/C_UNIT": item["A/C_UNIT"],
+      IMAGE_URL: item.IMAGE_URL,
+      IMAGE: item.IMAGE,
+      MIME_TYPE: item.MIME_TYPE,
+      FILE_NAME: item.FILE_NAME,
+      STOCK_QUANTITY: item.STOCK_QUANTITY,
+      details: Array.isArray(item.details) ? item.details : [],
+    };
+
+    return res.status(200).json({ success: true, data: customerItem });
+  } catch (error) {
+    console.error("Error fetching customer item details:", error);
+    return res.status(500).json({ success: false, message: "Failed to load item details" });
   }
 };
 
@@ -158,26 +218,6 @@ exports.getStockOutItemByBarcode = async (req, res) => {
   } catch (error) {
     console.error("Error fetching stock-out item by barcode:", error);
     res.status(500).json({ success: false, message: "Failed to fetch item" });
-  }
-};
-
-exports.addStock = async (req, res) => {
-  try {
-    const payload = req.body?.items ? req.body.items : req.body;
-    const result = await inventoryModel.addStockTransactions(payload);
-    res.status(201).json({ success: true, data: result });
-  } catch (error) {
-    console.error("Error adding stock:", error);
-    if (error.code === "DUPLICATE_BARCODE") {
-      return res.status(409).json({ success: false, message: "Duplicate Barcode" });
-    }
-    if (error.code === "ITEM_NOT_FOUND") {
-      return res.status(404).json({ success: false, message: "Item not found" });
-    }
-    if (error.code === "INVALID_DATA") {
-      return res.status(400).json({ success: false, message: "Invalid data" });
-    }
-    res.status(500).json({ success: false, message: "Failed to add stock" });
   }
 };
 
@@ -224,9 +264,10 @@ exports.updateItemImage = async (req, res) => {
 
 exports.getStockInReport = async (req, res) => {
   try {
-    const { fromDate, toDate } = req.query;
-    const rows = await inventoryModel.getStockInReport({ fromDate, toDate });
-    res.status(200).json({ success: true, data: rows });
+    const { fromDate, toDate, search, limit, offset } = req.query;
+    const rows = await inventoryModel.getStockInReport({ fromDate, toDate, search, limit, offset });
+    const summary = await inventoryModel.getStockInReportSummary({ fromDate, toDate, search });
+    res.status(200).json({ success: true, data: rows, summary });
   } catch (error) {
     console.error("Error fetching stock-in report:", error);
     res.status(500).json({ success: false, message: "Failed to load stock-in report" });
@@ -235,19 +276,41 @@ exports.getStockInReport = async (req, res) => {
 
 exports.getStockOutReport = async (req, res) => {
   try {
-    const { fromDate, toDate } = req.query;
-    const rows = await inventoryModel.getStockOutReport({ fromDate, toDate });
-    res.status(200).json({ success: true, data: rows });
+    const { fromDate, toDate, search, limit, offset } = req.query;
+    const rows = await inventoryModel.getStockOutReport({ fromDate, toDate, search, limit, offset });
+    const summary = await inventoryModel.getStockOutReportSummary({ fromDate, toDate, search });
+    res.status(200).json({ success: true, data: rows, summary });
   } catch (error) {
     console.error("Error fetching stock-out report:", error);
     res.status(500).json({ success: false, message: "Failed to load stock-out report" });
   }
 };
 
+exports.getTodayStockOutDetails = async (req, res) => {
+  try {
+    const rows = await inventoryModel.getTodayStockOutDetails();
+    res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Error fetching today's stock-out details:", error);
+    res.status(500).json({ success: false, message: "Failed to load today's stock-out details" });
+  }
+};
+
 exports.addStockOut = async (req, res) => {
   try {
     const payload = req.body?.items ? req.body.items : req.body;
-    const result = await inventoryModel.addStockOutTransactions(payload);
+    // console.log("Received payload for stock-out:", payload);
+    const createdBy =
+      req.user?.username ||
+      req.user?.user_name ||
+      req.user?.email ||
+      "SYSTEM";
+
+    const normalizedPayload = Array.isArray(payload)
+      ? payload.map((item) => ({ ...item, createdBy: item?.createdBy || createdBy }))
+      : { ...payload, createdBy: payload?.createdBy || createdBy };
+
+    const result = await inventoryModel.addStockOutTransactions(normalizedPayload);
     res.status(201).json({ success: true, data: result });
   } catch (error) {
     console.error("Error adding stock-out:", error);
@@ -268,3 +331,49 @@ exports.addStockOut = async (req, res) => {
 };
 
 
+exports.updateItemStatus = async (req, res) => {
+  try {
+    const { itemCode } = req.params;
+    const { status } = req.body;
+
+    if (!itemCode || !status) {
+      return res.status(400).json({
+        success: false,
+        message: "Item code and status are required",
+      });
+    }
+
+    const normalizedStatus = status.toUpperCase();
+
+    if (!["ACTIVE", "INACTIVE"].includes(normalizedStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status",
+      });
+    }
+
+    const updated = await inventoryModel.updateItemStatus(
+      itemCode,
+      normalizedStatus
+    );
+
+    if (updated === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Item not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Item status updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating item status:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update item status",
+    });
+  }
+};

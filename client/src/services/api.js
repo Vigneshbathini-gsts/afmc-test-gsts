@@ -1,25 +1,38 @@
 // axios instance goes here
 import axios from "axios";
+import { clearAuthData, getToken } from "../utils/authStorage";
+
+const clearOrderHistoryFilters = () => {
+  try {
+    Object.keys(sessionStorage).forEach((key) => {
+      if (key === "orderHistoryFilters" || key.startsWith("orderHistoryFilters:")) {
+        sessionStorage.removeItem(key);
+      }
+    });
+  } catch (_) {
+    // Ignore storage access errors.
+  }
+};
 
 const trimTrailingSlash = (value) => value.replace(/\/+$/, "");
 
 const getDefaultApiBase = () => {
   if (typeof window === "undefined") {
-    return "http://localhost:5000/AFMCMESS/api";
+    return "http://localhost:8456/AFMCMESSTEST/api";
   }
 
   const { protocol, hostname, port, origin } = window.location;
 
   if (hostname === "localhost" || hostname === "127.0.0.1") {
-    const backendOrigin = `${protocol}//${hostname}:5000`;
-    return `${backendOrigin}/AFMCMESS/api`;
+    const backendOrigin = `${protocol}//${hostname}:8456`;
+    return `${backendOrigin}/AFMCMESSTEST/api`;
   }
 
   if (port === "3000") {
-    return `${protocol}//${hostname}:5000/AFMCMESS/api`;
+    return `${protocol}//${hostname}:8456/AFMCMESSTEST/api`;
   }
 
-  return `${origin}/AFMCMESS/api`;
+  return `${origin}/AFMCMESSTEST/api`;
 };
 
 export const API_BASE_URL = trimTrailingSlash(
@@ -41,7 +54,7 @@ const api = axios.create({
 // ================================
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -57,11 +70,20 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (
+      err.response?.status === 403 &&
+      (err.response?.data?.code === "BAR_CLOSED" || err.response?.data?.code === "MESS_CLOSED") &&
+      !window.location.pathname.includes("/bar-closed")
+    ) {
+      window.location.href = "/bar-closed";
+    }
+
+    if (
       err.response?.status === 401 &&
       !window.location.pathname.includes("/login")
     ) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("authUser");
+      // Clear all authentication data when 401 Unauthorized is received
+      clearAuthData();
+      clearOrderHistoryFilters();
       window.location.href = "/login";
     }
     return Promise.reject(err);
@@ -72,9 +94,8 @@ api.interceptors.response.use(
 // Auth-aware fetch helper (for legacy fetch usage)
 // ================================
 export async function authFetchJson(input, init = {}) {
-  const token = localStorage.getItem("token");
   const headers = new Headers(init.headers || {});
-
+  const token = getToken();
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
@@ -86,8 +107,9 @@ export async function authFetchJson(input, init = {}) {
   });
 
   if (res.status === 401 && !window.location.pathname.includes("/login")) {
-    localStorage.removeItem("token");
-    localStorage.removeItem("authUser");
+    // Clear all authentication data when 401 Unauthorized is received
+    clearAuthData();
+    clearOrderHistoryFilters();
     window.location.href = "/login";
     throw new Error("Unauthorized");
   }
@@ -100,6 +122,14 @@ export async function authFetchJson(input, init = {}) {
   }
 
   if (!res.ok) {
+    if (
+      res.status === 403 &&
+      (data?.code === "BAR_CLOSED" || data?.code === "MESS_CLOSED") &&
+      !window.location.pathname.includes("/bar-closed")
+    ) {
+      window.location.href = "/bar-closed";
+    }
+
     const message =
       (data && (data.message || data.error)) || `Request failed (${res.status})`;
     throw new Error(message);
@@ -194,19 +224,39 @@ export const inventoryAPI = {
     }),
   getStockInReport: (params) => api.get("/inventory/stock-in-report", { params }),
   getStockOutReport: (params) => api.get("/inventory/stock-out-report", { params }),
+  getTodayStockOutDetails: () => api.get("/inventory/today-stock-out-details"),
+  getNextBatchId: (params) => api.get("/inventory/batch-id/next", { params }),
   getStockOutItemByBarcode: (barcode) => api.get(`/inventory/stock-out/barcode/${barcode}`),
   createStockOut: (data) => api.post("/inventory/stock-out", data),
   getById: (id) => api.get(`/inventory/${id}`),
+  getCustomerById: (id) => api.get(`/inventory/customer/${id}`),
   addStock: (data) => api.post("/inventory/add-stock", data),
   updateStock: (id, data) => api.put(`/inventory/${id}`, data),
   deleteStock: (id) => api.delete(`/inventory/${id}`),
+  updateItemStatus: (itemCode, status) => api.put(`/inventory/${itemCode}/status`, { status })
 };
 
 export const cartAPI = {
   getByUserId: (userId) => api.get("/cart", { params: { userId } }),
   addItem: (cartData) => api.post("/cart", cartData),
+  addNewItem: (cartData) => api.post("/cart/add", cartData),
+  proceedToBuy: (data = {}) => api.post("/cart/proceed-to-buy", data),
   getCocktailDetails: (cartId, params) => api.get(`/cart/cocktail/${cartId}`, { params }),
   updateCocktailIngredients: (cartId, data) => api.patch(`/cart/cocktail/${cartId}/ingredients`, data),
+  customizeCocktail: (cartId, data) => api.put(`/cart/customize/${cartId}`, data),
+  // When editing an existing buy-flow order, pass the current order number so the backend
+  // can exclude that order from reserved stock calculations.
+  // Backwards compatible with legacy `excludeOrderNumber` param.
+  getIngredientStocks: (codes, orderNumber, buyOrderNumber, excludeCartId) =>
+    api.get("/cart/ingredient-stocks", {
+      params: {
+        codes: Array.isArray(codes) ? codes.join(",") : codes,
+        orderNumber: orderNumber || undefined,
+        buyOrderNumber: buyOrderNumber || undefined,
+        excludeOrderNumber: orderNumber || buyOrderNumber || undefined,
+        excludeCartId: excludeCartId || undefined,
+      },
+    }),
   updateQuantity: (cartId, quantity) => api.patch(`/cart/${cartId}`, { quantity }),
   deleteItem: (cartId) => api.delete(`/cart/${cartId}`),
   confirmOrder: (data) => api.post("/cart/confirm-order", data),
@@ -224,7 +274,7 @@ export const orderAPI = {
   create: (orderData) => api.post("/orders", orderData),
   getAll: () => api.get("/orders"),
   getById: (id) => api.get(`/orders/${id}`),
-  getOrderDetails: (id) => api.get(`/orders/${id}`),
+  getOrderDetails: (id, params) => api.get(`/orders/${id}`, { params }),
   updateStatus: (id, data) => api.put(`/orders/${id}/status`, data),
   cancelOrder: (id, data) => api.put(`/orders/${id}/cancel`, data),
 
@@ -246,6 +296,11 @@ export const orderAPI = {
 
   // Admin
   getOrderHistory: (params) => api.get("/orders/history", { params }),
+  getOrderHistoryUsers: () => api.get("/orders/history/users"),
+  getOrderWiseReport: (params) => api.get("/orders/history/order-wise", { params }),
+  getItemWiseReport: (params) => api.get("/orders/history/item-wise", { params }),
+  getOrderSummary: (orderNumber) => api.get(`/orders/${orderNumber}/summary`),
+  getUserOrderHistory: (params) => api.get("/orders/user/history", { params }),
 };
 
 // ================================
@@ -272,13 +327,19 @@ export const barOrdersAPI = {
   getScannedItems: (orderNumber) => api.get(`/bar-orders/scanned-items/${orderNumber}`),
   clearScannedItems: (orderNumber) => api.delete(`/bar-orders/scanned-items/${orderNumber}`),
   cancelItem: (data) => api.put("/bar-orders/cancel", data),
+  cancelOrder: (data) => api.put("/bar-orders/cancel", data),
   getActiveOrders: (kitchen = "Bar") => api.get(`/bar-orders/active?kitchen=${kitchen}`),
   markNotificationAsRead: (data) => api.put("/bar-orders/notifications/read", data),
-getCocktailDetailsById: (itemId, orderNumber) => api.get(`/bar-orders/cocktail/${itemId}?orderNumber=${orderNumber}`),
+  markAllNotificationsAsRead: (data) => api.put("/bar-orders/notifications/read-all", data),
+getCocktailDetailsById: (itemId, orderNumber) =>
+  api.get(`/bar-orders/cocktail/${itemId}`, {
+    params: orderNumber ? { orderNumber } : {},
+  }),
 getCancelledOrders: (params) => api.get("/bar-orders/cancelled-orders", { params }),
 getOrderHistory: (params) => api.get("/bar-orders/order-history", { params }),
-getOrderDetailsByOrderNumber: (orderNumber) => api.get(`/bar-orders/cancelled-order-details/${orderNumber}`),
-getOrderHistoryItemDetails: (orderNumber) => api.get(`/bar-orders/order-history-details/${orderNumber}`),
+getOrderDetailsByOrderNumber: (orderNumber, kitchen) => api.get(`/bar-orders/cancelled-order-details/${orderNumber}`, { params: { kitchen } }),
+getOrderHistoryItemDetails: (orderNumber, kitchen) => api.get(`/bar-orders/order-history-details/${orderNumber}`, { params: { kitchen } }),
+completeOrder: (data) => api.post("/bar-orders/completeOrder", data),
 
 };
 // ================================
@@ -299,7 +360,9 @@ export const collectionAPI = {
 // OFFERS API
 // ================================
 export const offersAPI = {
-  getAllOffers: () => api.get("/offers"),
+  getActiveOffers: () => api.get("/offers/active"),
+  getAllOffers: (includeExpired = false) =>
+    api.get(includeExpired ? "/offers?includeExpired=true" : "/offers"),
   getOfferById: (id) => api.get(`/offers/${id}`),
   createOffer: (data) => api.post('/offers', data),
   updateOffer: (id, data) => api.put(`/offers/${id}`, data),
@@ -330,9 +393,9 @@ export const profitAPI = {
 export const cocktailAPI = {
   getAll: (params) => api.get("/cocktails", { params }),
   getById: (id) => api.get(`/cocktails/${id}`),
-  getIngredientOptions: (search = "") =>
+  getIngredientOptions: (search = "", params = {}) =>
     api.get("/cocktails/ingredients/options", {
-      params: search ? { search } : undefined,
+      params: { ...params, ...(search ? { search } : {}) },
     }),
   getIngredientPrice: (itemCode, pegs) =>
     api.get("/cocktails/ingredients/price", {
@@ -356,10 +419,32 @@ export const notificationAPI = {
     api.put(`/notifications/stock-out/read/${itemCode}`),
 };
 
+export const invoiceAPI = {
+  getByOrderNumber: (orderNumber) => api.get(`/invoice/${orderNumber}`),
+  savePayment: (orderNumber, data) => api.post(`/invoice/${orderNumber}/payment`, data),
+};
+
+export const invoiceReportAPI = {
+  getByOrderNumber: (orderNumber) => api.get(`/invoice-report/${orderNumber}`),
+};
+
 export const cancelledOrdersAPI = {
   getCancelledOrders: (params) => api.get("/cancelled-orders", { params }),
 };
 
+export const barStatusAPI = {
+  getStatus: () => api.get("/bar-status"),
+  updateStatus: (status) => api.put("/bar-status", { status }),
+};
+
+export const messTimingsAPI = {
+  getWeeklyTimings: () => api.get("/mess-timings"),
+  getCurrentStatus: () => api.get("/mess-timings/status"),
+  updateWeeklyTimings: (timings) =>
+    api.put("/mess-timings", {
+      timings,
+    }),
+};
 
 
 export default api;

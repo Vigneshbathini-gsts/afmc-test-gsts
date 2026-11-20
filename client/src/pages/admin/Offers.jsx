@@ -36,7 +36,7 @@ export default function Offers() {
       setLoading(true);
       setError("");
 
-      const res = await offersAPI.getAllOffers();
+      const res = await offersAPI.getAllOffers(true);
       const offersData = res.data.offers || [];
       console.log("Raw Offers Data:", offersData);
       const initcapOffers = offersData.map(offer => ({
@@ -133,7 +133,7 @@ export default function Offers() {
   // =========================
   // NAVIGATION
   // =========================
-  const handleBack = () => navigate(-1);
+  const handleBack = () => navigate("/admin/dashboard");
   const handleCreate = () => navigate("/admin/offers/create");
   const handleEdit = (id) => navigate(`/admin/offers/edit/${id}`);
 
@@ -179,7 +179,7 @@ export default function Offers() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-afmc-bg via-white to-afmc-bg2 relative p-6 md:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-afmc-bg via-white to-afmc-bg2 relative px-0 py-4 md:p-8">
       {/* Background Blobs */}
       <div className="absolute top-20 left-20 w-72 h-72 bg-afmc-maroon/10 rounded-full blur-3xl"></div>
       <div className="absolute bottom-20 right-20 w-80 h-80 bg-afmc-maroon2/10 rounded-full blur-3xl"></div>
@@ -199,7 +199,7 @@ export default function Offers() {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="flex w-full flex-wrap justify-end gap-3 lg:w-auto">
             <button
               onClick={handleBack}
               className="px-5 py-3 rounded-2xl bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold shadow-sm transition flex items-center gap-2"
@@ -307,13 +307,14 @@ export default function Offers() {
                   <thead className="bg-white/70 border-b border-gray-200">
                     <tr className="text-gray-700">
                       <th className="px-5 py-4 font-semibold">Action</th>
-                      <th className="px-5 py-4 font-semibold">Offer Id</th>
+                      {/* <th className="px-5 py-4 font-semibold">Offer ID</th> */}
                       <th className="px-5 py-4 font-semibold">Item Name</th>
                       <th className="px-5 py-4 font-semibold">Free Item</th>
                       <th className="px-5 py-4 font-semibold">Offer Date</th>
                       <th className="px-5 py-4 font-semibold">End Date</th>
-                      <th className="px-5 py-4 font-semibold">Status</th>
+
                       <th className="px-5 py-4 font-semibold">Message</th>
+                      <th className="px-5 py-4 font-semibold">Status</th>
                     </tr>
                   </thead>
 
@@ -334,9 +335,9 @@ export default function Offers() {
                           </button>
                         </td>
 
-                        <td className="px-5 py-4 font-semibold text-gray-800">
+                        {/* <td className="px-5 py-4 font-semibold text-gray-800">
                           {offer.offer_id}
-                        </td>
+                        </td> */}
 
                         <td className="px-5 py-4 text-gray-700 font-medium">
                           {offer.item_name || "-"}
@@ -354,6 +355,11 @@ export default function Offers() {
                           {formatDate(offer.end_date)}
                         </td>
 
+
+
+                        <td className="px-5 py-4 text-gray-700 min-w-[280px]">
+                          {offer.message || "-"}
+                        </td>
                         <td className="px-5 py-4">
                           <span
                             className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${getStatusStyle(
@@ -363,10 +369,6 @@ export default function Offers() {
                             {offer.status || "Inactive"}
                           </span>
 
-                        </td>
-
-                        <td className="px-5 py-4 text-gray-700 min-w-[280px]">
-                          {offer.message || "-"}
                         </td>
                       </tr>
                     ))}
@@ -406,8 +408,8 @@ export default function Offers() {
                       key={page}
                       onClick={() => handlePageClick(page)}
                       className={`w-10 h-10 rounded-xl font-semibold transition ${currentPage === page
-                          ? "bg-afmc-maroon text-white shadow-md"
-                          : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-100"
+                        ? "bg-afmc-maroon text-white shadow-md"
+                        : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-100"
                         }`}
                     >
                       {page}

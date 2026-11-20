@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "react-toastify";
 import { PlusCircle, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { cocktailAPI } from "../../services/api";
@@ -15,21 +16,34 @@ const createEmptyRow = () => ({
   nonMemberPrice: "",
 });
 
+const INGREDIENT_PAGE_SIZE = 20;
+const digitsOnly = (value) => String(value ?? "").replace(/\D/g, "");
+const JPG_IMAGE_ERROR = "Only JPG image files are allowed.";
+const isJpgImageFile = (file) => {
+  if (!file) return true;
+  const fileName = String(file.name || "").toLowerCase();
+  return fileName.endsWith(".jpg") && (!file.type || file.type === "image/jpeg");
+};
+
 export default function CocktailCreate() {
   const navigate = useNavigate();
   const [form, setForm] = useState({
     itemName: "",
     subCategory: "",
     description: "",
-    memberProfit: "",
+    // memberProfit: "",
     memberPrCharges: "",
-    nonMemberProfit: "",
+    // nonMemberProfit: "",
     nonMemberPrCharges: "",
     image: null,
   });
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState([createEmptyRow()]);
   const [ingredientOptions, setIngredientOptions] = useState([]);
+  const [ingredientPage, setIngredientPage] = useState(0);
+  const [ingredientHasMore, setIngredientHasMore] = useState(true);
+  const [ingredientsLoadingMore, setIngredientsLoadingMore] = useState(false);
+  const [ingredientsLoading, setIngredientsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -44,17 +58,17 @@ export default function CocktailCreate() {
       return "Sub category is required.";
     }
 
-    if (form.memberProfit === "") {
-      return "Member Profit is required.";
-    }
+    // if (form.memberProfit === "") {
+    //   return "Member Profit is required.";
+    // }
 
     if (form.memberPrCharges === "") {
       return "Member Pr Charges is required.";
     }
 
-    if (form.nonMemberProfit === "") {
-      return "Non Member Profit is required.";
-    }
+    // if (form.nonMemberProfit === "") {
+    //   return "Non Member Profit is required.";
+    // }
 
     if (form.nonMemberPrCharges === "") {
       return "Non Member Pr Charges is required.";
@@ -63,22 +77,85 @@ export default function CocktailCreate() {
     return "";
   };
 
-  useEffect(() => {
-    const fetchIngredientOptions = async () => {
-      try {
-        const response = await cocktailAPI.getIngredientOptions();
-        setIngredientOptions(response.data?.data || []);
-        console.log(response.data);
-      } catch (fetchError) {
-        console.error(fetchError);
-      }
-    };
+  const [ingredientSearch, setIngredientSearch] = useState("");
+  const ingredientRequestIdRef = useRef(0);
 
-    fetchIngredientOptions();
+  // Fetches a single page of ingredient options, filtered by `query` on the
+  // backend (real search: matches ITEM_NAME or ITEM_CODE server-side).
+  const fetchIngredientOptions = useCallback(async ({ reset = true, nextPage = 0, query = "", subCategory = "" } = {}) => {
+      const requestId = ++ingredientRequestIdRef.current;
+      if (!reset) setIngredientsLoadingMore(true);
+      else setIngredientsLoading(true);
+      try {
+        const response = await cocktailAPI.getIngredientOptions(query, {
+          limit: INGREDIENT_PAGE_SIZE,
+          offset: nextPage * INGREDIENT_PAGE_SIZE,
+          subCategory,
+        });
+
+        // Ignore this result if a newer search/page request has since started
+        // (prevents an older, slower response from overwriting fresher results).
+        if (requestId !== ingredientRequestIdRef.current) return;
+
+        const rows = response.data?.data || [];
+        setIngredientOptions((current) => (reset ? rows : [...current, ...rows]));
+        setIngredientPage(nextPage + 1);
+        setIngredientHasMore(rows.length === INGREDIENT_PAGE_SIZE);
+      } catch (fetchError) {
+        if (requestId !== ingredientRequestIdRef.current) return;
+        console.error(fetchError);
+        setIngredientHasMore(false);
+      } finally {
+        if (requestId === ingredientRequestIdRef.current) {
+          setIngredientsLoadingMore(false);
+          setIngredientsLoading(false);
+        }
+      }
+    }, []);
+
+  // Initial load: first page, no search term.
+  useEffect(() => {
+    fetchIngredientOptions({ reset: true, nextPage: 0, query: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Debounce what the user types in the dropdown's own search box, then ask
+  // the backend for matching items directly — no scrolling needed to find them.
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      fetchIngredientOptions({ reset: true, nextPage: 0, query: ingredientSearch, subCategory: form.subCategory });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [ingredientSearch, form.subCategory, fetchIngredientOptions]);
+
+  const handleIngredientSearchChange = useCallback((nextQuery) => {
+    setIngredientSearch(nextQuery);
+    setIngredientsLoading(true);
+  }, []);
+
+  const handleIngredientMenuScroll = useCallback(() => {
+    fetchIngredientOptions({ reset: false, nextPage: ingredientPage, query: ingredientSearch, subCategory: form.subCategory });
+  }, [fetchIngredientOptions, ingredientPage, ingredientSearch, form.subCategory]);
 
   const updateForm = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleImageChange = (event) => {
+    const file = event.target.files?.[0] || null;
+
+    if (file && !isJpgImageFile(file)) {
+      event.target.value = "";
+      updateForm("image", null);
+      setError(JPG_IMAGE_ERROR);
+      toast.error(JPG_IMAGE_ERROR);
+      return;
+    }
+
+    updateForm("image", file);
+    if (error) {
+      setError("");
+    }
   };
 
   const updateRow = (id, field, value) => {
@@ -131,10 +208,11 @@ export default function CocktailCreate() {
       );
     } catch (pricingError) {
       console.error(pricingError);
-      setError(
+      const pricingErrorMessage =
         pricingError.response?.data?.message ||
-          "Unable to calculate member/non-member price for the selected item."
-      );
+        "Unable to calculate member/non-member price for the selected item.";
+      setError(pricingErrorMessage);
+      toast.error(pricingErrorMessage);
     }
   };
 
@@ -162,23 +240,66 @@ export default function CocktailCreate() {
     }
   };
 
+//  const handlePegsChange = async (rowId, pegs) => {
+//   // Remove alphabets and special characters
+//   const numericValue = pegs.replace(/[^0-9.]/g, "");
+
+//   // Prevent multiple dots
+//   const cleanedValue = numericValue
+//     .replace(/(\..*)\./g, "$1");
+
+//   const existingRow = rows.find((row) => row.id === rowId);
+
+//   updateRow(rowId, "pegs", cleanedValue);
+
+//   if (existingRow?.itemCode) {
+//     await recalculateRowPrices(
+//       rowId,
+//       existingRow.itemCode,
+//       cleanedValue
+//     );
+//   }
+// };
+
+  
   const handlePegsChange = async (rowId, pegs) => {
-    const existingRow = rows.find((row) => row.id === rowId);
-    updateRow(rowId, "pegs", pegs);
+  // Remove everything except digits and dot
+  let cleanedValue = pegs.replace(/[^0-9.]/g, "");
 
-    if (existingRow?.itemCode) {
-      await recalculateRowPrices(rowId, existingRow.itemCode, pegs);
-    }
+  // Prevent dot as first character
+  if (cleanedValue.startsWith(".")) {
+    cleanedValue = cleanedValue.substring(1);
+  }
+
+  // Allow only one decimal point
+  const parts = cleanedValue.split(".");
+  if (parts.length > 2) {
+    cleanedValue = `${parts[0]}.${parts.slice(1).join("")}`;
+  }
+
+  const existingRow = rows.find((row) => row.id === rowId);
+
+  updateRow(rowId, "pegs", cleanedValue);
+
+  if (existingRow?.itemCode && cleanedValue) {
+    await recalculateRowPrices(
+      rowId,
+      existingRow.itemCode,
+      cleanedValue
+    );
+  }
   };
-
+  
   const addRow = () => {
     setRows((current) => [...current, createEmptyRow()]);
   };
 
   const deleteRow = (id) => {
-    setRows((current) =>
-      current.length === 1 ? current : current.filter((row) => row.id !== id)
-    );
+    setRows((current) => {
+      if (current.length === 1) return current;
+      toast.success("Ingredient row removed.");
+      return current.filter((row) => row.id !== id);
+    });
   };
 
   const filteredRows = useMemo(() => {
@@ -190,18 +311,43 @@ export default function CocktailCreate() {
 
   const subCategoryOptions = useMemo(
     () => [
-      { value: "14", label: "Cocktail" },
-      { value: "15", label: "Mocktail" },
+      { value: "14", label: "Mocktail" },
+      { value: "15", label: "Cocktail" },
     ],
     []
   );
 
-  const ingredientDropdownOptions = useMemo(() => {
-    return ingredientOptions.map((opt) => ({
-      value: String(opt.ITEM_CODE ?? "").trim(),
-      label: `${String(opt.ITEM_CODE ?? "").trim()} - ${toInitCap(opt.ITEM_NAME)}`,
-    }));
-  }, [ingredientOptions]);
+  const normalizeItemCode = (value) => String(value ?? "").trim();
+
+  const getIngredientDropdownOptions = (currentRow) => {
+    const currentItemCode = normalizeItemCode(currentRow?.itemCode);
+    const selectedCodes = new Set(
+      rows
+        .filter((r) => r.id !== currentRow.id)
+        .map((r) => normalizeItemCode(r.itemCode))
+        .filter(Boolean)
+    );
+
+    const options = ingredientOptions
+      .map((opt) => ({
+        value: String(opt.ITEM_CODE ?? "").trim(),
+        label: `${String(opt.ITEM_CODE ?? "").trim()} - ${toInitCap(opt.ITEM_NAME)}`,
+      }))
+      .filter((opt) => !selectedCodes.has(String(opt.value)) || String(opt.value) === currentItemCode);
+
+    if (
+      currentItemCode &&
+      currentRow?.itemName &&
+      !options.some((option) => String(option.value) === currentItemCode)
+    ) {
+      return [
+        { value: currentItemCode, label: `${currentItemCode} - ${toInitCap(currentRow.itemName)}` },
+        ...options,
+      ];
+    }
+
+    return options;
+  };
 
   const formatIngredientLabel = (label) => {
     const str = String(label ?? "");
@@ -217,7 +363,13 @@ export default function CocktailCreate() {
 
     if (validationMessage) {
       setError(validationMessage);
-      window.alert(validationMessage);
+      toast.error(validationMessage);
+      return;
+    }
+
+    if (!isJpgImageFile(form.image)) {
+      setError(JPG_IMAGE_ERROR);
+      toast.error(JPG_IMAGE_ERROR);
       return;
     }
 
@@ -226,12 +378,16 @@ export default function CocktailCreate() {
       setError("");
 
       if (!form.itemName?.trim()) {
-        setError("Item name is required.");
+        const validationMessage = "Item name is required.";
+        setError(validationMessage);
+        toast.error(validationMessage);
         return;
       }
 
       if (!form.subCategory) {
-        setError("Please select Cocktail or Mocktail.");
+        const validationMessage = "Please select Cocktail or Mocktail.";
+        setError(validationMessage);
+        toast.error(validationMessage);
         return;
       }
 
@@ -247,9 +403,9 @@ export default function CocktailCreate() {
       payload.append("itemName", form.itemName.trim());
       payload.append("subCategory", form.subCategory);
       payload.append("description", form.description);
-      payload.append("memberProfit", form.memberProfit);
+      // payload.append("memberProfit", form.memberProfit);
       payload.append("memberPrCharges", form.memberPrCharges);
-      payload.append("nonMemberProfit", form.nonMemberProfit);
+      // payload.append("nonMemberProfit", form.nonMemberProfit);
       payload.append("nonMemberPrCharges", form.nonMemberPrCharges);
       payload.append("rows", JSON.stringify(normalizedRows));
 
@@ -258,6 +414,8 @@ export default function CocktailCreate() {
       }
 
       await cocktailAPI.create(payload);
+      const successMessage = "Cocktail item created successfully.";
+      toast.success(successMessage);
       navigate("/admin/cocktail-management");
     } catch (submitError) {
       console.error(submitError);
@@ -265,28 +423,28 @@ export default function CocktailCreate() {
         submitError.response?.data?.message ||
         "Unable to create cocktail item. Please check the entered values.";
       setError(message);
-      window.alert(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
   };
 
-  return (
+ return (
     <div className="min-h-screen bg-gradient-to-br from-afmc-bg via-white to-afmc-bg2 relative">
       <div className="absolute top-16 left-12 w-72 h-72 bg-afmc-maroon/10 rounded-full blur-3xl"></div>
       <div className="absolute bottom-20 right-20 w-80 h-80 bg-afmc-maroon2/10 rounded-full blur-3xl"></div>
 
-      <div className="p-6 md:p-8 relative z-10">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6 md:mb-8">
-          <h1 className="text-2xl font-semibold text-afmc-maroon">
+      <div className="px-4 py-4 sm:px-5 md:p-8 relative z-10">
+        <div className="flex flex-col gap-4 mb-6 md:mb-8 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <h1 className="text-xl sm:text-2xl font-semibold text-afmc-maroon">
             Create Cocktail/Mocktail
           </h1>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="flex w-full gap-3 sm:w-auto sm:flex-wrap">
             <button
               type="button"
               onClick={() => navigate("/admin/cocktail-management")}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition"
+              className="flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition sm:flex-none sm:px-5"
             >
               <FaArrowLeft />
               Back
@@ -295,7 +453,7 @@ export default function CocktailCreate() {
               type="button"
               onClick={handleSubmit}
               disabled={saving}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-afmc-maroon hover:bg-afmc-maroon2 text-white font-semibold shadow hover:shadow-md transition disabled:opacity-60 disabled:cursor-not-allowed"
+              className="flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-full bg-afmc-maroon hover:bg-afmc-maroon2 text-white font-semibold shadow hover:shadow-md transition disabled:opacity-60 disabled:cursor-not-allowed sm:flex-none sm:px-6"
             >
               <PlusCircle size={18} />
               {saving ? "Creating..." : "Create"}
@@ -303,7 +461,7 @@ export default function CocktailCreate() {
           </div>
         </div>
 
-        <div className="bg-white/80 border border-afmc-gold/15 rounded-3xl shadow-xl backdrop-blur-sm p-5 md:p-6">
+        <div className="bg-white/80 border border-afmc-gold/15 rounded-2xl md:rounded-3xl shadow-xl backdrop-blur-sm p-4 sm:p-5 md:p-6">
           <div className="mb-5 md:mb-6 h-1 w-full rounded-full bg-gradient-to-r from-afmc-maroon via-afmc-gold to-afmc-maroon2" />
 
           <div className="space-y-6">
@@ -313,115 +471,153 @@ export default function CocktailCreate() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <input
-              value={form.itemName}
-              onChange={(event) => {
-                updateForm("itemName", event.target.value);
-                if (error) {
-                  setError("");
-                }
-              }}
-              placeholder="Item Name"
-              className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 capitalize"
-            />
-            <FilterDropdown
-              label="Sub Category"
-              value={form.subCategory}
-              onChange={(next) => updateForm("subCategory", next)}
-              options={subCategoryOptions}
-              placeholder="Sub Category"
-              allLabel="All"
-            />
-            <input
-              value={form.description}
-              onChange={(event) => updateForm("description", event.target.value)}
-              placeholder="Description"
-              className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-            />
-            <div>
-              <label className="mb-1 block text-sm text-[#4d4640]">Image</label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(event) =>
-                  updateForm("image", event.target.files?.[0] || null)
-                }
-                className="w-full rounded-2xl border border-dashed border-gray-300 bg-white px-4 py-3"
-              />
-            </div>
-          </div>
+  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 items-start">
+  <div>
+    <label className="mb-1 block text-sm text-[#4d4640]">Item Name</label>
+    <input
+      value={form.itemName}
+      onChange={(event) => {
+        updateForm("itemName", event.target.value);
+        if (error) {
+          setError("");
+        }
+      }}
+      placeholder="Item Name"
+      className="h-[52px] w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 capitalize"
+    />
+  </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <input
+  <div>
+    <label className="mb-1 block text-sm text-[#4d4640]">Sub Category</label>
+    <FilterDropdown
+      value={form.subCategory}
+      onChange={(next) => updateForm("subCategory", next)}
+      options={subCategoryOptions}
+      placeholder="Sub Category"
+      allLabel="All"
+      buttonClassName="h-[52px] w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 text-left flex items-center"
+    />
+  </div>
+
+  <div>
+    <label className="mb-1 block text-sm text-[#4d4640]">Description</label>
+    <input
+      value={form.description}
+      onChange={(event) => updateForm("description", event.target.value)}
+      placeholder="Description"
+      className="h-[52px] w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+    />
+  </div>
+
+  <div>
+    <label className="mb-1 block text-sm text-[#4d4640]">Image</label>
+    <input
+      type="file"
+      accept=".jpg"
+      onChange={handleImageChange}
+      className="h-[52px] w-full rounded-2xl border border-dashed border-gray-300 bg-white px-4 flex items-center file:mr-3 file:h-full file:border-0 file:bg-transparent"
+    />
+  </div>
+</div>
+
+          {/* Pr Charges inputs - side by side on mobile too, 4 cols on xl */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+            {/* <input
+              inputMode="numeric"
+              pattern="[0-9]*"
               value={form.memberProfit}
               onChange={(event) => {
-                updateForm("memberProfit", event.target.value);
+                updateForm("memberProfit", digitsOnly(event.target.value));
                 if (error) {
                   setError("");
                 }
               }}
               placeholder="Member Profit"
               className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-            />
+            /> */}
+            <div>
+              <label className="mb-1 block text-sm text-[#4d4640]">Member PR charges</label>
             <input
+              inputMode="numeric"
+              pattern="[0-9]*"
               value={form.memberPrCharges}
               onChange={(event) => {
-                updateForm("memberPrCharges", event.target.value);
+                updateForm("memberPrCharges", digitsOnly(event.target.value));
                 if (error) {
                   setError("");
                 }
               }}
-              placeholder="Member Pr Charges"
-              className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+              placeholder="Member PR Charges"
+              className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
             />
-            <input
+            </div>
+            {/* <input
+              inputMode="numeric"
+              pattern="[0-9]*"
               value={form.nonMemberProfit}
               onChange={(event) => {
-                updateForm("nonMemberProfit", event.target.value);
+                updateForm("nonMemberProfit", digitsOnly(event.target.value));
                 if (error) {
                   setError("");
                 }
               }}
               placeholder="Non Member Profit"
               className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-            />
+            /> */}
+            <div>
+             <label className="mb-1 block text-sm text-[#4d4640]">Non Member PR charges</label>
             <input
+              inputMode="numeric"
+              pattern="[0-9]*"
               value={form.nonMemberPrCharges}
               onChange={(event) => {
-                updateForm("nonMemberPrCharges", event.target.value);
+                updateForm("nonMemberPrCharges", digitsOnly(event.target.value));
                 if (error) {
                   setError("");
                 }
               }}
-              placeholder="Non Member Pr Charges"
-              className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+              placeholder="Non Member PR Charges"
+              className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
             />
+            </div>
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-            <div className="flex flex-wrap items-center gap-4 border-b border-gray-100 px-4 py-4">
+            {/* Ingredients header - label stacks above on mobile, Search + Add Row always side by side */}
+            <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
               <div className="flex items-center gap-2 text-gray-600">
                 <Search size={18} />
                 <span className="text-sm font-medium">Ingredients</span>
               </div>
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search: All Text Columns"
-                className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-              />
-              <button
-                type="button"
-                onClick={addRow}
-                className="ml-auto px-6 py-3 rounded-2xl bg-[#5b5b5b] text-white font-semibold shadow hover:shadow-md"
-              >
-                Add Row
-              </button>
+
+              <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center sm:gap-3">
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search: All Text Columns"
+                  className="min-w-0 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 sm:w-auto sm:flex-1 sm:min-w-[240px]"
+                />
+                <button
+                  type="button"
+                  onClick={addRow}
+                  className="w-full shrink-0 whitespace-nowrap rounded-2xl bg-[#5b5b5b] px-4 py-3 font-semibold text-white shadow hover:shadow-md sm:w-auto sm:px-6"
+                >
+                  Add Row
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-center text-sm">
+              <table className="min-w-[900px] w-full table-fixed text-center text-sm">
+                <colgroup>
+                  <col className="w-12" />
+                  <col className="w-[22%]" />
+                  <col className="w-[24%]" />
+                  <col className="w-20" />
+                  <col className="w-[15%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-24" />
+                </colgroup>
                 <thead className="bg-gray-50 text-gray-600">
                   <tr>
                     <th className="border-b border-r border-gray-100 px-4 py-4">
@@ -455,7 +651,8 @@ export default function CocktailCreate() {
                         <FilterDropdown
                           value={row.itemCode}
                           onChange={(next) => handleItemCodeChange(row.id, next)}
-                          options={ingredientDropdownOptions}
+                          // options={ingredientDropdownOptions}
+                          options={getIngredientDropdownOptions(row)}
                           placeholder="Select Item"
                           allLabel="Clear"
                           formatLabel={formatIngredientLabel}
@@ -463,6 +660,14 @@ export default function CocktailCreate() {
                           valueClassName="normal-case"
                           menuClassName="text-left"
                           usePortal
+                          searchValue={ingredientSearch}
+                          menuWidth={250}
+                          onMenuScroll={handleIngredientMenuScroll}
+                          onSearchChange={handleIngredientSearchChange}
+                          hasMore={ingredientHasMore}
+                          loadingMore={ingredientsLoadingMore}
+                          loading={ingredientsLoading}
+                          loadingLabel="Searching..."
                         />
                       </td>
                       <td className="border-r border-gray-100 px-2 py-3">
@@ -474,6 +679,8 @@ export default function CocktailCreate() {
                       </td>
                       <td className="border-r border-gray-100 px-2 py-3">
                         <input
+                          inputMode="decimal"
+                          pattern="[0-9]*"
                           value={row.pegs}
                           onChange={(event) =>
                             handlePegsChange(row.id, event.target.value)
@@ -510,7 +717,7 @@ export default function CocktailCreate() {
               </table>
             </div>
 
-            <div className="flex items-center justify-between px-4 py-3 text-sm text-gray-600">
+            <div className="flex flex-col gap-1 px-4 py-3 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
               <span>Showing {filteredRows.length} rows</span>
               <span>Total {rows.length}</span>
             </div>

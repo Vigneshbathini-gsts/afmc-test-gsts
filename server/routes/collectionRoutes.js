@@ -10,6 +10,8 @@ const {
   getCollectionSummary,
 } = require("../controllers/collectionController");
 const authMiddleware = require("../middleware/authMiddleware");
+const requireRole = require("../middleware/requireRole");
+router.use(requireRole(10, 80));
 
 // GET collection for order
 router.get("/:orderNumber", authMiddleware, getCollectionByOrder);

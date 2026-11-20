@@ -1,18 +1,28 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
 import {
   ChevronsLeft,
   Eye,
+  EyeOff,
   X,
   PlusCircle,
   Search,
   UploadCloud,
 } from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
 import { userAPI } from "../../services/api";
+import { getPasswordPolicyError } from "../../utils/passwordPolicy";
 
 const STATUS_STYLES = {
   Active: "bg-[#ebf7ef] text-[#1f7a3d] border-[#cbe8d3]",
   Inactive: "bg-[#fff1f1] text-[#b04444] border-[#f1c8c8]",
+};
+
+const formatRoleLabel = (role) => {
+  if (!role) return "-";
+  if (role === "Order") return "Order Attendent";
+  return role.replace(/_/g, " ");
 };
 
 const INITIAL_FORM = {
@@ -35,17 +45,15 @@ const validateCreateForm = (formData) => {
     return "First name must be at least 2 characters.";
   if (!formData.lastName.trim()) return "Last name is required.";
   if (!formData.userName.trim()) return "User name is required.";
-  if (!/^[A-Za-z0-9._-]{3,50}$/.test(formData.userName.trim())) {
-    return "User name must be 3 to 50 characters and can only include letters, numbers, dot, underscore, and hyphen.";
-  }
+  
   if (!formData.password) return "Password is required.";
-  if (formData.password.length < 6)
-    return "Password must be at least 6 characters.";
-  if (formData.password !== formData.confirmPassword) {
-    return "Password and confirm password must match.";
-  }
+  const passwordError = getPasswordPolicyError(formData.password, formData.confirmPassword);
+  if (passwordError) return passwordError;
   if (!formData.email.trim()) return "Email is required.";
   if (!EMAIL_REGEX.test(formData.email.trim()))
+    return "Please enter a valid email address.";
+   if (!formData.userName.trim()) return "User name is required.";
+  if (!EMAIL_REGEX.test(formData.userName.trim()))
     return "Please enter a valid email address.";
   if (!formData.phoneNumber.trim()) return "Phone number is required.";
   if (!PHONE_REGEX.test(formData.phoneNumber.trim()))
@@ -65,10 +73,14 @@ export default function UserManagement() {
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
   const [saving, setSaving] = useState(false);
+  const { user } = useAuth();
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadError, setUploadError] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState("");
   const [uploading, setUploading] = useState(false);
+  const uploadInputRef = useRef(null);
 
   const fetchUsers = useCallback(async (searchValue = "") => {
     try {
@@ -79,10 +91,11 @@ export default function UserManagement() {
       setUsers(response.data?.data || []);
     } catch (fetchError) {
       console.error("Failed to fetch users:", fetchError);
+      const fetchErrorMessage =
+        fetchError.response?.data?.message || "Unable to load user details.";
       setUsers([]);
-      setError(
-        fetchError.response?.data?.message || "Unable to load user details."
-      );
+      setError(fetchErrorMessage);
+      toast.error(fetchErrorMessage);
     } finally {
       setLoading(false);
     }
@@ -99,14 +112,27 @@ export default function UserManagement() {
   const visibleUsers = useMemo(() => users || [], [users]);
 
   const currentUser = useMemo(() => {
+    if (user) {
+      return user?.username || user?.email || user?.user_name || user?.name || "SYSTEM";
+    }
+
     try {
-      const storedUser = localStorage.getItem("user");
+      const storedUser =
+        localStorage.getItem("authUser") ;
+        console.log("auth user",storedUser)
       const parsed = storedUser ? JSON.parse(storedUser) : null;
-      return parsed?.username || parsed?.email || "SYSTEM";
+      console.log("parsed",parsed)
+      return (
+        parsed?.username ||
+        parsed?.email ||
+        parsed?.user_name ||
+        parsed?.name ||
+        "SYSTEM"
+      );
     } catch (parseError) {
       return "SYSTEM";
     }
-  }, []);
+  }, [user]);
 
   const resetForm = () => {
     setFormData(INITIAL_FORM);
@@ -123,12 +149,16 @@ export default function UserManagement() {
     setIsCreateModalOpen(false);
     setSaving(false);
     resetForm();
+    setIsUploadModalOpen(false);
   };
 
   const openUploadModal = () => {
     setUploadFile(null);
     setUploadError("");
     setUploadSuccess("");
+    if (uploadInputRef.current) {
+      uploadInputRef.current.value = "";
+    }
     setIsUploadModalOpen(true);
   };
 
@@ -137,6 +167,9 @@ export default function UserManagement() {
     setUploadError("");
     setUploadSuccess("");
     setUploading(false);
+    if (uploadInputRef.current) {
+      uploadInputRef.current.value = "";
+    }
     setIsUploadModalOpen(false);
   };
 
@@ -173,6 +206,7 @@ export default function UserManagement() {
     const validationMessage = validateCreateForm(formData);
     if (validationMessage) {
       setFormError(validationMessage);
+      toast.error(validationMessage);
       return;
     }
 
@@ -180,56 +214,101 @@ export default function UserManagement() {
       setSaving(true);
       const response = await userAPI.create(trimmedPayload);
 
-      setFormSuccess(response.data?.message || "User created successfully.");
+      const successMessage = response.data?.message || "User created successfully.";
+      setFormSuccess(successMessage);
+      toast.success(successMessage);
 
       await fetchUsers(search);
 
+      
+
       setTimeout(() => {
         closeCreateModal();
+        
+        
       }, 900);
+
+
     } catch (saveError) {
       console.error("Failed to create user:", saveError);
-      setFormError(
-        saveError.response?.data?.message || "Unable to create user."
-      );
+      const createErrorMessage =
+        saveError.response?.data?.message || "Unable to create user.";
+      setFormError(createErrorMessage);
+      toast.error(createErrorMessage);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleTemplateDownload = () => {
-    const csvContent = [
+  const handleTemplateDownload = async () => {
+    const XLSX = await import("xlsx");
+    const columns = [
+      "Login Type",
+      "Full Name With Rank",
+      "First Name",
+      "Last Name",
+      "User Name",
+      "Password",
+      "Confirm Password",
+      "Email",
+      "Phone Number",
+    ];
+    const sampleRow = [
+      "END USER",
+      "Capt Ram Kumar",
+      "Ram",
+      "Kumar",
+      "ram.kumar@example.com",
+      "Pass123",
+      "Pass123",
+      "ram.kumar@example.com",
+      "9876543210",
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ["AFMC Users Bulk Upload Template"],
       [
-        "Login Type",
-        "Full Name With Rank",
-        "First Name",
-        "Last Name",
-        "User Name",
-        "Password",
-        "Confirm Password",
-        "Email",
-      ].join(","),
-      [
-        "End User",
-        "Capt Ram Kumar",
-        "Ram",
-        "Kumar",
-        "ram.kumar",
-        "Pass123",
-        "Pass123",
-        "ram.kumar@example.com",
-      ].join(","),
-    ].join("\n");
+        "Fill all columns. Phone Number must be exactly 10 digits. Keep User Name as a valid email address.",
+      ],
+      columns,
+      sampleRow,
+    ]);
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", "multiple-employee-template.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
+    worksheet["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: columns.length - 1 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: columns.length - 1 } },
+    ];
+    worksheet["!cols"] = [
+      { wch: 16 },
+      { wch: 26 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 18 },
+      { wch: 30 },
+      { wch: 16 },
+    ];
+    worksheet.A1.s = {
+      font: { bold: true, color: { rgb: "FFFFFF" }, sz: 16 },
+      fill: { fgColor: { rgb: "5B1F2A" } },
+      alignment: { horizontal: "center" },
+    };
+    worksheet.A2.s = {
+      font: { bold: true, color: { rgb: "4A2F12" } },
+      fill: { fgColor: { rgb: "FFF4D6" } },
+    };
+    columns.forEach((_, index) => {
+      const cellAddress = XLSX.utils.encode_cell({ r: 2, c: index });
+      worksheet[cellAddress].s = {
+        font: { bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "1F2937" } },
+        alignment: { horizontal: "center" },
+      };
+    });
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Users Upload");
+    XLSX.writeFile(workbook, "multiple-employee-template.xlsx");
   };
 
   const handleUploadFileChange = (event) => {
@@ -241,7 +320,9 @@ export default function UserManagement() {
 
   const handleBulkUpload = async () => {
     if (!uploadFile) {
-      setUploadError("Please choose a CSV file to upload.");
+      const uploadFileError = "Please choose a CSV or Excel template file to upload.";
+      setUploadError(uploadFileError);
+      toast.error(uploadFileError);
       return;
     }
 
@@ -262,22 +343,30 @@ export default function UserManagement() {
         .map((item) => item.reason)
         .join(" | ");
 
-      setUploadSuccess(
+      const uploadSuccessMessage =
         `${response.data?.message || "Bulk upload completed."} Skipped: ${
           result?.skippedCount || 0
-        }${skippedMessages ? ` (${skippedMessages})` : ""}`
-      );
-
+        }${skippedMessages ? ` (${skippedMessages})` : ""}`;
+      setUploadSuccess(uploadSuccessMessage);
+      setUploadFile(null);
+      if (uploadInputRef.current) {
+        uploadInputRef.current.value = "";
+      }
+      toast.success(uploadSuccessMessage);
       await fetchUsers(search);
+      setTimeout(() => {
+        closeUploadModal();
+      }, 1200);
     } catch (uploadSaveError) {
       console.error("Failed to bulk upload users:", uploadSaveError);
       const backendErrors = uploadSaveError.response?.data?.errors;
-      setUploadError(
+      const uploadErrorMessage =
         Array.isArray(backendErrors) && backendErrors.length
           ? backendErrors.join(" | ")
           : uploadSaveError.response?.data?.message ||
-              "Unable to upload users."
-      );
+              "Unable to upload users.";
+      setUploadError(uploadErrorMessage);
+      toast.error(uploadErrorMessage);
     } finally {
       setUploading(false);
     }
@@ -288,13 +377,23 @@ export default function UserManagement() {
       <div className="absolute top-16 left-12 h-72 w-72 rounded-full bg-afmc-maroon/10 blur-3xl" />
       <div className="absolute bottom-20 right-20 h-80 w-80 rounded-full bg-afmc-maroon2/10 blur-3xl" />
 
-      <div className="relative z-10 p-8">
+      <div className="relative z-10 px-0 py-4 md:p-8">
+        <style>{`
+          .password-field::-ms-reveal,
+          .password-field::-ms-clear {
+            display: none;
+          }
+          .password-field::-webkit-textfield-decoration-container,
+          .password-field::-webkit-credentials-auto-fill-button {
+            display: none !important;
+          }
+        `}</style>
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold text-gray-800">User Management</h1>
           <button
             type="button"
             onClick={() => navigate("/admin/dashboard")}
-            className="flex items-center gap-2 rounded-full border border-white/60 bg-white px-5 py-2.5 text-gray-700 shadow hover:shadow-md"
+            className="self-end sm:self-auto inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition max-w-max"
           >
             <ChevronsLeft size={16} />
             Go To Dashboard
@@ -434,7 +533,7 @@ export default function UserManagement() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-gray-700">
-                          {user.Role || "-"}
+                          {formatRoleLabel(user.Role)}
                         </td>
                         <td className="px-4 py-3 text-gray-700">
                           {user.LOGIN_TYPE
@@ -483,7 +582,7 @@ export default function UserManagement() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateUser} className="relative">
+            <form onSubmit={handleCreateUser} className="relative" autoComplete="off">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -509,7 +608,7 @@ export default function UserManagement() {
                     name="firstName"
                     value={formData.firstName}
                     onChange={handleFormChange}
-                    maxLength={50}
+                     maxLength={25}
                     placeholder="Enter first name"
                     className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
                   />
@@ -524,7 +623,7 @@ export default function UserManagement() {
                     name="lastName"
                     value={formData.lastName}
                     onChange={handleFormChange}
-                    maxLength={50}
+                    maxLength={25}
                     placeholder="Enter last name"
                     className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
                   />
@@ -535,12 +634,13 @@ export default function UserManagement() {
                     User Name
                   </label>
                   <input
-                    type="text"
+                    type="email"
                     name="userName"
                     value={formData.userName}
                     onChange={handleFormChange}
-                    maxLength={50}
-                    placeholder="Enter user name"
+                    autoComplete="off"
+                    maxLength={100}
+                    placeholder="Enter username same as email"
                     className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
                   />
                 </div>
@@ -554,6 +654,7 @@ export default function UserManagement() {
                     name="email"
                     value={formData.email}
                     onChange={handleFormChange}
+                    autoComplete="off"
                     maxLength={100}
                     placeholder="Enter email"
                     className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
@@ -564,33 +665,57 @@ export default function UserManagement() {
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Password
                   </label>
-                  <input
-                    type="password"
-                    name="password"
-                    value={formData.password}
-                    onChange={handleFormChange}
-                    minLength={6}
-                    placeholder="Enter password"
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      name="password"
+                      value={formData.password}
+                      onChange={handleFormChange}
+                      autoComplete="new-password"
+                      minLength={6}
+                      maxLength={72}
+                      placeholder="Enter password"
+                      className="password-field w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 pr-10 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 transition hover:text-gray-700"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
                 </div>
 
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Confirm Password
                   </label>
-                  <input
-                    type="password"
-                    name="confirmPassword"
-                    value={formData.confirmPassword}
-                    onChange={handleFormChange}
-                    minLength={6}
-                    placeholder="Re-enter password"
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showConfirmPassword ? "text" : "password"}
+                      name="confirmPassword"
+                      value={formData.confirmPassword}
+                      onChange={handleFormChange}
+                      autoComplete="new-password"
+                      minLength={6}
+                      maxLength={72}
+                      placeholder="Re-enter password"
+                      className="password-field w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 pr-10 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 transition hover:text-gray-700"
+                      aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                    >
+                      {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
                 </div>
 
-                <div className="md:col-span-2">
+                <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Phone Number
                   </label>
@@ -679,8 +804,9 @@ export default function UserManagement() {
                       Upload File:
                     </label>
                     <input
+                      ref={uploadInputRef}
                       type="file"
-                      accept=".csv"
+                      accept=".csv,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                       onChange={handleUploadFileChange}
                       className="block w-full rounded-md border border-dashed border-[#9b8f82] bg-white px-3 py-2 text-[#241d17] file:mr-4 file:rounded file:border-0 file:bg-transparent file:text-base"
                     />

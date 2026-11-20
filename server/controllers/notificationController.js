@@ -30,11 +30,10 @@ exports.getStockOutNotifications = async (req, res) => {
       data: rows,
     });
   } catch (error) {
-    console.error("Error fetching stock out notifications:", error);
+    console.error("Failed to fetch stock out notifications");
     return res.status(500).json({
       success: false,
       message: "Server error while fetching stock out notifications",
-      error: error.message,
     });
   }
 };
@@ -60,11 +59,10 @@ exports.markStockOutRead = async (req, res) => {
       affectedRows: result.affectedRows,
     });
   } catch (error) {
-    console.error("Error marking stock notification as read:", error);
+    console.error("Failed to mark stock notification as read");
     return res.status(500).json({
       success: false,
       message: "Server error while updating stock notification",
-      error: error.message,
     });
   }
 };

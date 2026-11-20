@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { FaTimes, FaLock } from "react-icons/fa";
 import { authAPI } from "../../services/api";
 import { useNavigate } from "react-router-dom";
+import { getPasswordPolicyError } from "../../utils/passwordPolicy";
 
 export default function ChangePasswordModal({ isOpen, onClose }) {
   const navigate = useNavigate();
@@ -28,8 +29,9 @@ export default function ChangePasswordModal({ isOpen, onClose }) {
     setError("");
     setMessage("");
 
-    if (formData.newPassword !== formData.confirmPassword) {
-      setError("New password and confirm password do not match");
+    const passwordError = getPasswordPolicyError(formData.newPassword, formData.confirmPassword);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
 
@@ -124,6 +126,8 @@ export default function ChangePasswordModal({ isOpen, onClose }) {
               name="newPassword"
               value={formData.newPassword}
               onChange={handleChange}
+              minLength={6}
+              maxLength={72}
               className="w-full border rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-afmc-maroon/30"
               placeholder="Enter new password"
               required
@@ -139,6 +143,8 @@ export default function ChangePasswordModal({ isOpen, onClose }) {
               name="confirmPassword"
               value={formData.confirmPassword}
               onChange={handleChange}
+              minLength={6}
+              maxLength={72}
               className="w-full border rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-afmc-maroon/30"
               placeholder="Confirm new password"
               required

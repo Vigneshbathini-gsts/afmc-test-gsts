@@ -1,8 +1,31 @@
 const db = require("../config/db");
 
+const getOfferItemAvailability = async (itemCode) => {
+  const [[row]] = await db.query(
+    `
+      SELECT
+        IFNULL(SUM(STOCK_QUANTITY), 0) AS available_quantity
+      FROM xxafmc_stock_out
+      WHERE ITEM_CODE = ?
+    `,
+    [itemCode]
+  );
+
+  return row ? Number(row.available_quantity || 0) : 0;
+};
+
 // Get All Offers
 exports.getAllOffers = async (req, res) => {
   try {
+    const includeExpired = req.query.includeExpired === "true";
+    const availabilityFilter = includeExpired
+      ? ""
+      : `WHERE (
+          ofr.END_DATE IS NULL
+          OR CURDATE() <= ofr.END_DATE
+        )
+        AND UPPER(IFNULL(ofr.STATUS, '')) <> 'INACTIVE'`;
+
     const [offers] = await db.query(`
       SELECT 
           ofr.OFFER_ID as offer_id,
@@ -14,6 +37,7 @@ exports.getAllOffers = async (req, res) => {
           DATE_FORMAT(ofr.OFFER_DATE, '%Y-%m-%d') as offer_date,
 
           CASE 
+            WHEN UPPER(IFNULL(ofr.STATUS, '')) = 'INACTIVE' THEN 'Inactive'
             WHEN CURDATE() < ofr.OFFER_DATE THEN 'Scheduled'
             WHEN ofr.END_DATE IS NULL AND CURDATE() >= ofr.OFFER_DATE THEN 'Active'
             WHEN CURDATE() BETWEEN ofr.OFFER_DATE AND ofr.END_DATE THEN 'Active'
@@ -25,22 +49,29 @@ exports.getAllOffers = async (req, res) => {
           ofr.FREE_ITEM_QUANTITY as free_item_quantity
 
       FROM xxafmc_offers ofr
-      LEFT JOIN xxafmc_inventory inv 
-        ON ofr.ITEM_CODE = inv.item_code
-      LEFT JOIN xxafmc_inventory freeinv 
-        ON ofr.FREE_ITEM_CODE = freeinv.item_code
-
-      GROUP BY 
-          ofr.OFFER_ID, 
-          ofr.ITEM_CODE, 
-          ofr.FREE_ITEM_CODE, 
-          ofr.OFFER_QUANTITY, 
-          ofr.OFFER_DATE,
-          ofr.MESSAGE, 
-          ofr.END_DATE, 
-          ofr.FREE_ITEM_QUANTITY
-
-      ORDER BY ofr.OFFER_ID DESC
+LEFT JOIN xxafmc_inventory inv 
+  ON ofr.ITEM_CODE = inv.item_code
+LEFT JOIN xxafmc_inventory freeinv 
+  ON ofr.FREE_ITEM_CODE = freeinv.item_code
+${availabilityFilter}
+GROUP BY
+    ofr.OFFER_ID, 
+    ofr.ITEM_CODE, 
+    ofr.FREE_ITEM_CODE, 
+    ofr.OFFER_QUANTITY, 
+    ofr.OFFER_DATE,
+    ofr.MESSAGE, 
+    ofr.END_DATE, 
+    ofr.FREE_ITEM_QUANTITY
+ORDER BY
+  CASE
+    WHEN UPPER(IFNULL(ofr.STATUS, '')) = 'INACTIVE' THEN 1
+    WHEN CURDATE() < ofr.OFFER_DATE THEN 1
+    WHEN ofr.END_DATE IS NULL OR CURDATE() <= ofr.END_DATE THEN 0
+    ELSE 1
+  END ASC,
+  ofr.CREATION_DATE DESC,
+  ofr.OFFER_ID DESC
     `);
 
     res.status(200).json({
@@ -71,7 +102,12 @@ exports.getOfferById = async (req, res) => {
           DATE_FORMAT(ofr.OFFER_DATE, '%Y-%m-%d') as offer_date,
           ofr.MESSAGE as message,
           ofr.FREE_ITEM_QUANTITY as free_item_quantity,
-          ofr.STATUS as status,
+          CASE
+            WHEN UPPER(IFNULL(ofr.STATUS, '')) = 'INACTIVE' THEN 'Inactive'
+            WHEN CURDATE() < ofr.OFFER_DATE THEN 'Scheduled'
+            WHEN ofr.END_DATE IS NULL OR CURDATE() <= ofr.END_DATE THEN 'Active'
+            ELSE 'Inactive'
+          END as status,
           DATE_FORMAT(ofr.END_DATE, '%Y-%m-%d') as end_date
       FROM xxafmc_offers ofr
       LEFT JOIN xxafmc_inventory inv 
@@ -97,7 +133,7 @@ exports.getOfferById = async (req, res) => {
   }
 };
 
-// Create Offer (No end_date required, status defaults to 'Active')
+// Create Offer (end_date is now required)
 exports.createOffer = async (req, res) => {
   try {
     const {
@@ -106,6 +142,7 @@ exports.createOffer = async (req, res) => {
       free_item_code,
       free_item_quantity,
       offer_date,
+      end_date,
       message,
     } = req.body;
 
@@ -127,6 +164,22 @@ exports.createOffer = async (req, res) => {
     }
     if (!offer_date) {
       return res.status(400).json({ message: "Offer date is required" });
+    }
+    if (!end_date) {
+      return res.status(400).json({ message: "End date is required" });
+    }
+    if (offer_date && end_date && end_date < offer_date) {
+      return res.status(400).json({ message: "End date cannot be earlier than offer date" });
+    }
+
+    const itemAvailableQuantity = await getOfferItemAvailability(item_code);
+    if (itemAvailableQuantity <= 0) {
+      return res.status(400).json({ message: "Selected item has no stock" });
+    }
+
+    const freeItemAvailableQuantity = await getOfferItemAvailability(free_item_code);
+    if (freeItemAvailableQuantity <= 0) {
+      return res.status(400).json({ message: "Selected free item has no stock" });
     }
 
     // Get item names from inventory
@@ -153,12 +206,13 @@ exports.createOffer = async (req, res) => {
           FREE_ITEM,
           FREE_ITEM_QUANTITY,
           OFFER_DATE,
+          END_DATE,
           MESSAGE,
           CREATED_BY,
           CREATION_DATE,
           LAST_UPDATED_BY,
           LAST_UPDATED_DATE
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, NOW())`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, NOW())`,
       [
         item_code,
         itemName,
@@ -167,6 +221,7 @@ exports.createOffer = async (req, res) => {
         freeItemName,
         free_item_quantity,
         offer_date,
+        end_date,
         message || null,
         username,
         username
@@ -180,11 +235,8 @@ exports.createOffer = async (req, res) => {
     });
 
   } catch (err) {
-    console.log("Create Offer Error:", err);
-    res.status(500).json({ 
-      message: "Internal server error",
-      error: err.message 
-    });
+    console.error("Failed to create offer");
+    res.status(500).json({ message: "Internal server error" });
   }
 };
 
@@ -192,12 +244,17 @@ exports.updateOffer = async (req, res) => {
   try {
     const { id } = req.params;
     const username = req.user?.username || "SYSTEM";
-    const { endDate } = req.body;
+    const { endDate, status } = req.body;
 
     // console.log("Updating Offer - ID:", id, "EndDate:", endDate);
 
-    if (!endDate) {
-      return res.status(400).json({ message: "End date is required" });
+    if (!endDate || !status) {
+      return res.status(400).json({ message: "End date and status are required" });
+    }
+
+    const normalizedStatus = String(status).trim().toUpperCase();
+    if (!['ACTIVE', 'INACTIVE'].includes(normalizedStatus)) {
+      return res.status(400).json({ message: "Invalid offer status" });
     }
 
     // Check if offer exists
@@ -210,14 +267,27 @@ exports.updateOffer = async (req, res) => {
       return res.status(404).json({ message: "Offer not found" });
     }
 
-    // ✅ ONLY update END_DATE (NO STATUS)
+    const [currentOffer] = await db.query(
+      "SELECT STATUS, DATE_FORMAT(OFFER_DATE, '%Y-%m-%d') AS OFFER_DATE FROM xxafmc_offers WHERE OFFER_ID = ?",
+      [id]
+    );
+
+    if (String(currentOffer[0].STATUS || '').toUpperCase() === 'INACTIVE' && normalizedStatus === 'ACTIVE') {
+      return res.status(400).json({ message: "Inactive offers cannot be activated again" });
+    }
+
+    if (currentOffer[0].OFFER_DATE && endDate < currentOffer[0].OFFER_DATE) {
+      return res.status(400).json({ message: "End date cannot be earlier than start date" });
+    }
+
     await db.query(
       `UPDATE xxafmc_offers 
        SET END_DATE = ?,
+           STATUS = ?,
            LAST_UPDATED_BY = ?,
            LAST_UPDATED_DATE = NOW()
        WHERE OFFER_ID = ?`,
-      [endDate, username, id]
+      [endDate, normalizedStatus === 'INACTIVE' ? 'Inactive' : 'Active', username, id]
     );
 
     res.status(200).json({
@@ -227,11 +297,8 @@ exports.updateOffer = async (req, res) => {
     });
 
   } catch (err) {
-    console.log("Update Offer Error:", err);
-    res.status(500).json({ 
-      message: "Internal server error",
-      error: err.message 
-    });
+    console.error("Failed to update offer");
+    res.status(500).json({ message: "Internal server error" });
   }
 };
 
@@ -239,8 +306,24 @@ exports.updateOffer = async (req, res) => {
 exports.getAllItemsForOffer = async (req, res) => {
   try {
     const [items] = await db.query(`
-      SELECT DISTINCT item_code, item_name 
-      FROM xxafmc_inventory 
+      SELECT
+        xi.ITEM_CODE AS item_code,
+        TRIM(xi.ITEM_NAME) AS item_name,
+        IFNULL(stock_summary.stock_quantity, 0) AS available_quantity
+      FROM xxafmc_inventory xi
+      INNER JOIN (
+        SELECT ITEM_CODE, IFNULL(SUM(STOCK_QUANTITY), 0) AS stock_quantity
+        FROM xxafmc_stock_out
+        GROUP BY ITEM_CODE
+      ) stock_summary
+        ON stock_summary.ITEM_CODE = xi.ITEM_CODE
+      WHERE TRIM(IFNULL(xi.ITEM_NAME, '')) <> ''
+        AND xi.SUB_CATEGORY NOT IN (14, 15)
+      GROUP BY
+        xi.ITEM_CODE,
+        xi.ITEM_NAME,
+        stock_summary.stock_quantity
+      HAVING available_quantity > 0
       ORDER BY item_name
     `);
 

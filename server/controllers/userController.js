@@ -1,4 +1,6 @@
 const userModel = require("../models/userModel");
+const XLSX = require("xlsx");
+const { validatePassword } = require("../helpers/authHelper");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^\d{10}$/;
@@ -43,16 +45,11 @@ const validateCreatePayload = (payload) => {
     return "Last name must be between 1 and 50 characters";
   }
 
-  if (!/^[A-Za-z0-9._-]{3,50}$/.test(payload.userName)) {
-    return "User name must be 3 to 50 characters and can only include letters, numbers, dot, underscore, and hyphen";
-  }
+  
 
-  if (payload.password.length < 6) {
-    return "Password must be at least 6 characters";
-  }
-
-  if (payload.password !== payload.confirmPassword) {
-    return "Password and confirm password must match";
+  const passwordError = validatePassword(payload.password, payload.confirmPassword);
+  if (passwordError) {
+    return passwordError;
   }
 
   if (!EMAIL_REGEX.test(payload.email)) {
@@ -133,8 +130,133 @@ const parseCsvLine = (line) => {
   return values.map((value) => value.replace(/^"|"$/g, "").trim());
 };
 
+const decodeHtmlCell = (value = "") =>
+  String(value)
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'")
+    .trim();
+
+const parseHtmlTableRows = (htmlText) => {
+  const tableRows = [];
+  const rowMatches = htmlText.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+
+  rowMatches.forEach((rowHtml) => {
+    const cellMatches = rowHtml.match(/<t[dh][\s\S]*?<\/t[dh]>/gi) || [];
+    const cells = cellMatches.map(decodeHtmlCell);
+
+    if (cells.length) {
+      tableRows.push(cells);
+    }
+  });
+
+  return tableRows;
+};
+
+const expectedBulkHeaders = [
+  "login type",
+  "full name with rank",
+  "first name",
+  "last name",
+  "user name",
+  "password",
+  "confirm password",
+  "email",
+  "phone number",
+];
+
+const validateBulkHeaders = (headers) => {
+  if (
+    headers.length !== expectedBulkHeaders.length ||
+    expectedBulkHeaders.some((header, index) => headers[index] !== header)
+  ) {
+    throw new Error(
+      "Invalid template. Please use the sample template for bulk upload"
+    );
+  }
+};
+
+const mapBulkRow = (columns, index) => ({
+  rowNumber: index + 2,
+  loginType: String(columns[0] || "").trim(),
+  fullName: String(columns[1] || "").trim(),
+  firstName: String(columns[2] || "").trim(),
+  lastName: String(columns[3] || "").trim(),
+  userName: String(columns[4] || "").trim(),
+  password: String(columns[5] || "").trim(),
+  confirmPassword: String(columns[6] || "").trim(),
+  email: String(columns[7] || "").trim(),
+  phoneNumber: String(columns[8] || "").replace(/\D/g, "").trim(),
+});
+
 const parseBulkCsv = (buffer) => {
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b) {
+    const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const tableRows = XLSX.utils.sheet_to_json(worksheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+      blankrows: false,
+    });
+    const headerIndex = tableRows.findIndex((row) => {
+      const normalizedRow = row.map((header) =>
+        String(header || "").trim().toLowerCase()
+      );
+      return expectedBulkHeaders.every(
+        (header, index) => normalizedRow[index] === header
+      );
+    });
+
+    if (headerIndex === -1 || tableRows.length <= headerIndex + 1) {
+      throw new Error(
+        "Invalid template. Please use the sample template for bulk upload"
+      );
+    }
+
+    const headers = tableRows[headerIndex].map((header) =>
+      String(header || "").trim().toLowerCase()
+    );
+    validateBulkHeaders(headers);
+
+    return tableRows
+      .slice(headerIndex + 1)
+      .filter((row) => row.some((cell) => String(cell || "").trim()))
+      .map(mapBulkRow);
+  }
+
   const csvText = buffer.toString("utf8").replace(/^\uFEFF/, "");
+
+  if (/<table[\s\S]*?>/i.test(csvText)) {
+    const tableRows = parseHtmlTableRows(csvText);
+    const headerIndex = tableRows.findIndex((row) => {
+      const normalizedRow = row.map((header) => header.toLowerCase());
+      return expectedBulkHeaders.every(
+        (header, index) => normalizedRow[index] === header
+      );
+    });
+
+    if (headerIndex === -1 || tableRows.length <= headerIndex + 1) {
+      throw new Error(
+        "Invalid template. Please use the sample template for bulk upload"
+      );
+    }
+
+    const headers = tableRows[headerIndex].map((header) => header.toLowerCase());
+    validateBulkHeaders(headers);
+
+    return tableRows
+      .slice(headerIndex + 1)
+      .filter((row) => row.some((cell) => String(cell || "").trim()))
+      .map(mapBulkRow);
+  }
+
   const lines = csvText
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -145,40 +267,12 @@ const parseBulkCsv = (buffer) => {
   }
 
   const headers = parseCsvLine(lines[0]).map((header) => header.toLowerCase());
-  const expectedHeaders = [
-    "login type",
-    "full name with rank",
-    "first name",
-    "last name",
-    "user name",
-    "password",
-    "confirm password",
-    "email",
-  ];
-
-  if (
-    headers.length !== expectedHeaders.length ||
-    expectedHeaders.some((header, index) => headers[index] !== header)
-  ) {
-    throw new Error(
-      "Invalid template. Please use the sample template for bulk upload"
-    );
-  }
+  validateBulkHeaders(headers);
 
   return lines.slice(1).map((line, index) => {
     const columns = parseCsvLine(line);
 
-    return {
-      rowNumber: index + 2,
-      loginType: String(columns[0] || "").trim(),
-      fullName: String(columns[1] || "").trim(),
-      firstName: String(columns[2] || "").trim(),
-      lastName: String(columns[3] || "").trim(),
-      userName: String(columns[4] || "").trim(),
-      password: String(columns[5] || "").trim(),
-      confirmPassword: String(columns[6] || "").trim(),
-      email: String(columns[7] || "").trim(),
-    };
+    return mapBulkRow(columns, index);
   });
 };
 
@@ -194,26 +288,28 @@ const validateBulkRows = (rows) => {
       !row.userName ||
       !row.password ||
       !row.confirmPassword ||
-      !row.email
+      !row.email ||
+      !row.phoneNumber
     ) {
       errors.push(`Row ${row.rowNumber}: all columns are required`);
       return;
     }
 
-    if (row.password !== row.confirmPassword) {
-      errors.push(`Row ${row.rowNumber}: password and confirm password must match`);
-    }
-
-    if (row.password.length < 6) {
-      errors.push(`Row ${row.rowNumber}: password must be at least 6 characters`);
+    const passwordError = validatePassword(row.password, row.confirmPassword);
+    if (passwordError) {
+      errors.push(`Row ${row.rowNumber}: ${passwordError}`);
     }
 
     if (!EMAIL_REGEX.test(row.email)) {
       errors.push(`Row ${row.rowNumber}: invalid email address`);
     }
 
-    if (!/^[A-Za-z0-9._-]{3,50}$/.test(row.userName)) {
-      errors.push(`Row ${row.rowNumber}: invalid user name`);
+     if (!EMAIL_REGEX.test(row.userName)) {
+      errors.push(`Row ${row.rowNumber}: user name must be a valid email address`);
+    }
+
+    if (!PHONE_REGEX.test(row.phoneNumber)) {
+      errors.push(`Row ${row.rowNumber}: phone number must be exactly 10 digits`);
     }
   });
 
@@ -231,11 +327,10 @@ exports.getAllUsers = async (req, res) => {
       data: users,
     });
   } catch (error) {
-    console.error("Error while fetching users:", error);
+    console.error("Failed to fetch users");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch users",
-      error: error.message,
     });
   }
 };
@@ -257,11 +352,10 @@ exports.getUserById = async (req, res) => {
       data: user,
     });
   } catch (error) {
-    console.error("Error while fetching user details:", error);
+    console.error("Failed to fetch user details");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch user details",
-      error: error.message,
     });
   }
 };
@@ -276,11 +370,10 @@ exports.getRoleOptions = async (req, res) => {
       data: roles,
     });
   } catch (error) {
-    console.error("Error while fetching role options:", error);
+    console.error("Failed to fetch role options");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch role options",
-      error: error.message,
     });
   }
 };
@@ -305,7 +398,7 @@ exports.createUser = async (req, res) => {
       password: payload.password,
       email: payload.email,
       phoneNumber: payload.phoneNumber,
-      createdBy: payload.createdBy || "SYSTEM",
+      createdBy: req.user?.username || req.user?.user_name || "SYSTEM",
     });
 
     return res.status(201).json({
@@ -314,7 +407,7 @@ exports.createUser = async (req, res) => {
       data: createdUser,
     });
   } catch (error) {
-    console.error("Error while creating user:", error);
+    console.error("Failed to create user");
 
     const statusCode =
       error.message === "Username or email already exists" ? 409 : 500;
@@ -323,9 +416,8 @@ exports.createUser = async (req, res) => {
       success: false,
       message:
         statusCode === 409
-          ? error.message
+          ? "Username or email already exists"
           : "Failed to create user",
-      error: error.message,
     });
   }
 };
@@ -366,7 +458,7 @@ exports.updateUser = async (req, res) => {
       data: updatedUser,
     });
   } catch (error) {
-    console.error("Error while updating user:", error);
+    console.error("Failed to update user");
 
     const statusCode =
       error.message === "User not found"
@@ -378,10 +470,11 @@ exports.updateUser = async (req, res) => {
     return res.status(statusCode).json({
       success: false,
       message:
-        statusCode === 404 || statusCode === 409
-          ? error.message
+        statusCode === 404
+          ? "User not found"
+          : statusCode === 409
+            ? "Email already exists"
           : "Failed to update user",
-      error: error.message,
     });
   }
 };
@@ -418,6 +511,7 @@ exports.bulkUploadUsers = async (req, res) => {
         userName: row.userName,
         password: row.password,
         email: row.email,
+        phoneNumber: row.phoneNumber,
       })),
       createdBy,
     });
@@ -428,11 +522,10 @@ exports.bulkUploadUsers = async (req, res) => {
       data: result,
     });
   } catch (error) {
-    console.error("Error while bulk uploading users:", error);
+    console.error("Failed to bulk upload users");
     return res.status(500).json({
       success: false,
-      message: error.message || "Failed to bulk upload users",
-      error: error.message,
+      message: "Failed to bulk upload users",
     });
   }
 };

@@ -1,9 +1,10 @@
 const db = require("../config/db");
+const { isExcludedLiquorSubcategory } = require("../helpers/pricingHelper");
 
 const DETAIL_TABLE = "xxafmc_cocktails_mocktails_details";
 const AFMC_IMAGE_PUBLIC_BASE_URL = (
   process.env.AFMC_IMAGE_PUBLIC_BASE_URL ||
-  "https://afmc.globalsparkteksolutions.com/AFMCIMAGES"
+  "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST"
 ).replace(/\/+$/, "");
 
 const normalizeText = (value) => {
@@ -78,17 +79,17 @@ const validatePayload = (payload) => {
     throw new Error("Valid sub category is required");
   }
 
-  if (memberProfit == null) {
-    throw new Error("Member profit is required");
-  }
+  // if (memberProfit == null) {
+  //   throw new Error("Member profit is required");
+  // }
 
   if (memberPrCharges == null) {
     throw new Error("Member PR charges are required");
   }
 
-  if (nonMemberProfit == null) {
-    throw new Error("Non member profit is required");
-  }
+  // if (nonMemberProfit == null) {
+  //   throw new Error("Non member profit is required");
+  // }
 
   if (nonMemberPrCharges == null) {
     throw new Error("Non member PR charges are required");
@@ -141,9 +142,13 @@ const ensureCocktailNameIsUnique = async (itemName, excludeItemId = null, connec
   }
 };
 
-const getCocktailItems = async (search = "") => {
+const getCocktailItems = async (search = "", pagination = {}) => {
   const normalizedSearch =
     typeof search === "string" && search.trim() !== "" ? search.trim() : null;
+  const limit = Number(pagination.limit);
+  const offset = Number(pagination.offset);
+  const hasPagination =
+    Number.isInteger(limit) && limit > 0 && Number.isInteger(offset) && offset >= 0;
 
   const query = `
     SELECT
@@ -156,8 +161,8 @@ const getCocktailItems = async (search = "") => {
       UNIT_PRICE,
       FOOD_PR_CHARGES,
       CASE
-        WHEN SUB_CATEGORY = 14 THEN 'COCKTAIL'
-        WHEN SUB_CATEGORY = 15 THEN 'MOCKTAIL'
+        WHEN SUB_CATEGORY = 14 THEN 'MOCKTAIL'
+        WHEN SUB_CATEGORY = 15 THEN 'COCKTAIL'
         ELSE 'UNKNOWN'
       END AS CATEGORY_NAME,
       CASE
@@ -174,6 +179,7 @@ const getCocktailItems = async (search = "") => {
         OR CAST(ITEM_CODE AS CHAR) LIKE CONCAT('%', ?, '%')
       )
     ORDER BY ITEM_ID DESC
+    ${hasPagination ? `LIMIT ${limit} OFFSET ${offset}` : ""}
   `;
 
   const [rows] = await db.execute(query, [
@@ -185,9 +191,21 @@ const getCocktailItems = async (search = "") => {
   return rows;
 };
 
-const getCocktailIngredientOptions = async (search = "") => {
+const getCocktailIngredientOptions = async (search = "", pagination = {}) => {
   const normalizedSearch =
     typeof search === "string" && search.trim() !== "" ? search.trim() : null;
+  const limit = Number(pagination.limit);
+  const offset = Number(pagination.offset);
+  const hasPagination =
+    Number.isInteger(limit) && limit > 0 && Number.isInteger(offset) && offset >= 0;
+  const subCategory = Number(pagination.subCategory);
+  const hasSubCategoryFilter = [14, 15].includes(subCategory);
+  const subCategoryCondition = hasSubCategoryFilter
+    ? subCategory === 14
+      ? "AND SUB_CATEGORY IN (6, 9, 4, 18)"
+      : "AND SUB_CATEGORY NOT IN (1,  14, 15, 7, 10, 3, 1310)"
+    : "";
+
 
   const query = `
     SELECT DISTINCT
@@ -197,14 +215,17 @@ const getCocktailIngredientOptions = async (search = "") => {
     WHERE ITEM_CODE IS NOT NULL
       AND ITEM_NAME IS NOT NULL
       AND TRIM(ITEM_NAME) <> ''
-      AND (SUB_CATEGORY IS NULL OR SUB_CATEGORY NOT IN (14, 15))
+      AND (CATEGORY_ID IS NULL OR CATEGORY_ID <> 14)
+      AND STATUS = 'ACTIVE'
+      AND (\`A/C_UNIT\` IS NULL OR UPPER(TRIM(\`A/C_UNIT\`)) <> 'GLASS')
+      ${subCategoryCondition}
       AND (
         ? IS NULL
         OR UPPER(ITEM_NAME) LIKE CONCAT('%', UPPER(?), '%')
         OR CAST(ITEM_CODE AS CHAR) LIKE CONCAT('%', ?, '%')
       )
     ORDER BY ITEM_NAME ASC, ITEM_CODE ASC
-    LIMIT 200
+    LIMIT ${hasPagination ? limit : 20} OFFSET ${hasPagination ? offset : 0}
   `;
 
   const [rows] = await db.execute(query, [
@@ -212,7 +233,6 @@ const getCocktailIngredientOptions = async (search = "") => {
     normalizedSearch,
     normalizedSearch,
   ]);
-
   return rows;
 };
 
@@ -232,6 +252,8 @@ const getCocktailIngredientPricing = async (itemCode, pegs) => {
         inv.UNIT_PRICE,
         inv.PROFIT,
         inv.NON_MEMBER_PROFIT,
+        inv.CATEGORY_ID,
+        inv.SUB_CATEGORY,
         recent_price.UNIT_PRICE AS STOCK_UNIT_PRICE,
         recent_price.PEGS AS STOCK_PEGS
       FROM xxafmc_inventory inv
@@ -277,12 +299,19 @@ const getCocktailIngredientPricing = async (itemCode, pegs) => {
   const stockPegs = normalizeNumber(item.STOCK_PEGS) || 1;
   const memberProfit = normalizeNumber(item.PROFIT) || 0;
   const nonMemberProfit = normalizeNumber(item.NON_MEMBER_PROFIT) || 0;
+  const subCategory = normalizeNumber(item.SUB_CATEGORY) || 0;
+  const isExcludedLiquorItem =
+    normalizeNumber(item.CATEGORY_ID) === 10 && isExcludedLiquorSubcategory(subCategory);
   const basePegPrice = unitPrice / (stockPegs === 0 ? 1 : stockPegs);
   const memberPrice = Number(
-    (basePegPrice + (basePegPrice * memberProfit) / 100) * normalizedPegs
+    isExcludedLiquorItem
+      ? basePegPrice * normalizedPegs
+      : (basePegPrice + (basePegPrice * memberProfit) / 100) * normalizedPegs
   );
   const nonMemberPrice = Number(
-    (basePegPrice + (basePegPrice * nonMemberProfit) / 100) * normalizedPegs
+    isExcludedLiquorItem
+      ? basePegPrice * normalizedPegs
+      : (basePegPrice + (basePegPrice * nonMemberProfit) / 100) * normalizedPegs
   );
 
   return {
@@ -297,35 +326,97 @@ const getCocktailIngredientPricing = async (itemCode, pegs) => {
 const getCocktailDetailRows = async (inventoryItemCode, connection = db) => {
   const query = `
     SELECT
-      MOC_ID,
-      ITEM_CODE,
-      ITEM_NAME,
-      PRICE,
-      PEGS,
-      INVENTORY_ITEM_CODE,
-      NON_MEMBER_PRICE,
-      CATEGORY_ID,
-      SUBCATEGORY_ID
-    FROM ${DETAIL_TABLE}
-    WHERE INVENTORY_ITEM_CODE = ?
-    ORDER BY COALESCE(MOC_ID, 0), ITEM_NAME
+      recipe.MOC_ID,
+      recipe.ITEM_CODE,
+      recipe.ITEM_NAME,
+      recipe.PRICE,
+      recipe.PEGS,
+      recipe.INVENTORY_ITEM_CODE,
+      recipe.NON_MEMBER_PRICE,
+      recipe.CATEGORY_ID,
+      recipe.SUBCATEGORY_ID,
+
+      inventory.STATUS AS INGREDIENT_STATUS,
+
+      GREATEST(
+        IFNULL(stock_summary.stock_quantity, 0)
+          - IFNULL(reserved_summary.reserved_quantity, 0),
+        0
+      ) AS AVAILABLE_STOCK_QUANTITY
+
+    FROM ${DETAIL_TABLE} recipe
+
+    INNER JOIN xxafmc_inventory inventory
+      ON inventory.ITEM_CODE = recipe.ITEM_CODE
+      AND inventory.STATUS = 'ACTIVE'
+
+    LEFT JOIN (
+      SELECT
+        item_code,
+        IFNULL(SUM(stock_quantity), 0) AS stock_quantity
+      FROM xxafmc_stock_out
+      GROUP BY item_code
+    ) stock_summary
+      ON stock_summary.item_code = recipe.ITEM_CODE
+
+    LEFT JOIN (
+      SELECT
+        item_code,
+        IFNULL(reserved_qty, 0) AS reserved_quantity
+      FROM xxafmc_stock_reservation_totals
+    ) reserved_summary
+      ON reserved_summary.item_code = recipe.ITEM_CODE
+
+    WHERE recipe.INVENTORY_ITEM_CODE = ?
+
+    ORDER BY COALESCE(recipe.MOC_ID, 0), recipe.ITEM_NAME
   `;
 
   const [rows] = await connection.execute(query, [inventoryItemCode]);
-  return rows.map((row) => ({
-    mocId: row.MOC_ID,
-    itemCode: row.ITEM_CODE,
-    itemName: row.ITEM_NAME,
-    price: row.PRICE,
-    pegs: row.PEGS !== null ? Number(row.PEGS) : null,
-    inventoryItemCode: row.INVENTORY_ITEM_CODE,
-    nonMemberPrice: row.NON_MEMBER_PRICE,
-    categoryId: row.CATEGORY_ID,
-    subcategoryId: row.SUBCATEGORY_ID,
-    memberPrice: Number(row.PRICE || row.NON_MEMBER_PRICE || 0),
-  }));
-};
 
+  return rows.map((row) => {
+    const pegs = row.PEGS !== null ? Number(row.PEGS) : null;
+    const stockQuantity = Number(row.AVAILABLE_STOCK_QUANTITY || 0);
+
+    return {
+      MOC_ID: row.MOC_ID,
+      ITEM_CODE: row.ITEM_CODE,
+      ITEM_NAME: row.ITEM_NAME,
+      PRICE: row.PRICE,
+      PEGS: row.PEGS,
+      INVENTORY_ITEM_CODE: row.INVENTORY_ITEM_CODE,
+      NON_MEMBER_PRICE: row.NON_MEMBER_PRICE,
+      CATEGORY_ID: row.CATEGORY_ID,
+      SUBCATEGORY_ID: row.SUBCATEGORY_ID,
+      INGREDIENT_STATUS: row.INGREDIENT_STATUS,
+
+      mocId: row.MOC_ID,
+      itemCode: row.ITEM_CODE,
+      itemName: row.ITEM_NAME,
+      price: row.PRICE,
+      pegs,
+      inventoryItemCode: row.INVENTORY_ITEM_CODE,
+      nonMemberPrice: row.NON_MEMBER_PRICE,
+      categoryId: row.CATEGORY_ID,
+      subcategoryId: row.SUBCATEGORY_ID,
+
+      memberPrice: Number(row.PRICE || row.NON_MEMBER_PRICE || 0),
+
+      STOCK_QUANTITY: stockQuantity,
+      stockQuantity,
+
+      STOCK_STATUS:
+        stockQuantity >= Number(pegs || 1)
+          ? "In Stock"
+          : "Out Of Stock",
+
+      stockStatus:
+        stockQuantity >= Number(pegs || 1)
+          ? "In Stock"
+          : "Out Of Stock",
+    };
+  });
+};
 const getCocktailItemById = async (itemId) => {
   const query = `
     SELECT
@@ -363,7 +454,7 @@ const getCocktailItemById = async (itemId) => {
   }
 
   const details = await getCocktailDetailRows(item.ITEM_CODE || item.ITEM_ID);
-
+// console.log("details", details);
   return {
     ...item,
     details,
@@ -434,25 +525,25 @@ const syncInventoryUnitPrice = async (connection, inventoryItemCode) => {
 const createCocktailItem = async (payload, options = {}) => {
   const data = validatePayload(payload);
   const userName = normalizeText(options.userName) || "SYSTEM";
-//   const imagePath = options.imageFile
-//   ? `${AFMC_IMAGE_PUBLIC_BASE_URL}/${options.imageFile.filename}`
-//   : null;
-// const fileName = options.imageFile?.filename || null;
+  //   const imagePath = options.imageFile
+  //   ? `${AFMC_IMAGE_PUBLIC_BASE_URL}/${options.imageFile.filename}`
+  //   : null;
+  // const fileName = options.imageFile?.filename || null;
   // const mimeType = options.imageFile?.mimetype || null;
-  
-//   const imagePath = data.itemName || null;
-// const fileName = data.itemName || null;
+
+  //   const imagePath = data.itemName || null;
+  // const fileName = data.itemName || null;
   // const mimeType = options.imageFile?.mimetype || null;
-  
+
   const imagePath = options.imageFile
-  ? options.imageFile.filename
-  : null;
+    ? options.imageFile.filename
+    : null;
 
-const fileName = options.imageFile
-  ? options.imageFile.filename
-  : null;
+  const fileName = options.imageFile
+    ? options.imageFile.filename
+    : null;
 
-const mimeType = options.imageFile?.mimetype || null;
+  const mimeType = options.imageFile?.mimetype || null;
 
 
   const connection = await db.getConnection();
@@ -574,32 +665,32 @@ const updateCocktailItem = async (itemId, payload, options = {}) => {
     }
 
     const inventoryItemCode = Number(existingItem.ITEM_CODE || existingItem.ITEM_ID);
-//     const imagePath = options.imageFile
-//   ? `${AFMC_IMAGE_PUBLIC_BASE_URL}/${options.imageFile.filename}`
-//   : null;
+    //     const imagePath = options.imageFile
+    //   ? `${AFMC_IMAGE_PUBLIC_BASE_URL}/${options.imageFile.filename}`
+    //   : null;
 
-// const fileName = options.imageFile?.filename || null;
+    // const fileName = options.imageFile?.filename || null;
     // const mimeType = options.imageFile?.mimetype || null;
-    
-//     const imagePath = options.imageFile
-//   ? data.itemName
-//   : existingItem.IMAGE;
 
-// const fileName = options.imageFile
-//   ? data.itemName
+    //     const imagePath = options.imageFile
+    //   ? data.itemName
+    //   : existingItem.IMAGE;
+
+    // const fileName = options.imageFile
+    //   ? data.itemName
     //   : existingItem.FILE_NAME;
-    
+
     const imagePath = options.imageFile
-  ? options.imageFile.filename
+      ? options.imageFile.filename
       : existingItem.IMAGE;
-    
-    
 
-const fileName = options.imageFile
-  ? options.imageFile.filename
-  : existingItem.FILE_NAME;
 
-const mimeType = options.imageFile?.mimetype || existingItem.MIME_TYPE;
+
+    const fileName = options.imageFile
+      ? options.imageFile.filename
+      : existingItem.FILE_NAME;
+
+    const mimeType = options.imageFile?.mimetype || existingItem.MIME_TYPE;
 
     await connection.execute(
       `
@@ -675,5 +766,4 @@ module.exports = {
   createCocktailItem,
   updateCocktailItem,
 };
-
 

@@ -1,5 +1,6 @@
 const db = require("../config/db");
-const crypto = require("crypto");
+const { hashPassword } = require("../helpers/authHelper");
+const { formatToSql, toISO } = require("../utils/dateUtils");
 
 const BASE_USER_SELECT = `
   SELECT
@@ -68,18 +69,26 @@ const getRoleOptionsByLoginType = async (loginType) => {
   const normalizedLoginType = String(loginType || "").trim().toUpperCase();
 
   if (normalizedLoginType === "NON MEMBER") {
-    const [rows] = await db.execute(
+    const [userRoleRows] = await db.execute(
       `
         SELECT
-          ROLE_ID,
           CONCAT(UPPER(LEFT(ROLE, 1)), LOWER(SUBSTRING(ROLE, 2))) AS ROLE_NAME
         FROM xxafmc_role
         WHERE ROLE_CODE = 'USER'
-        ORDER BY ROLE_ID
+        LIMIT 1
       `
     );
 
-    return rows;
+    if (!userRoleRows[0]) {
+      return [];
+    }
+
+    return [
+      {
+        ROLE_ID: 30,
+        ROLE_NAME: userRoleRows[0].ROLE_NAME,
+      },
+    ];
   }
 
   const [rows] = await db.execute(
@@ -103,13 +112,45 @@ const getRoleOptionsByLoginType = async (loginType) => {
   return rows;
 };
 
+const mapRoleName = (roleCode, role) => {
+  if (roleCode === "STMG") return "Admin";
+  if (roleCode === "MBOP") return "Order Attendant";
+  if (roleCode === "STKP") return "Store Keeper";
+  if (roleCode === "KADM") return "Kitchen Admin";
+  return `${String(role || "").charAt(0).toUpperCase()}${String(role || "")
+    .slice(1)
+    .toLowerCase()}`;
+};
+
 const getRoleForLoginType = async (loginType) => {
   const normalizedLoginType = String(loginType || "").trim().toUpperCase();
-  const roleId = normalizedLoginType === "NON MEMBER" ? 30 : 20;
+  if (normalizedLoginType === "NON MEMBER") {
+    const [userRoleRows] = await db.execute(
+      `
+        SELECT ROLE
+        FROM xxafmc_role
+        WHERE ROLE_CODE = 'USER'
+        LIMIT 1
+      `
+    );
 
-  const [roleIdRows] = await db.execute(
+    if (!userRoleRows[0]) {
+      return null;
+    }
+
+    return {
+      ROLE_ID: 30,
+      ROLE: userRoleRows[0].ROLE,
+      ROLE_CODE: "MBOP",
+      ROLE_NAME: mapRoleName("USER", userRoleRows[0].ROLE),
+    };
+  }
+
+  const roleId = 20;
+
+  const [roleRows] = await db.execute(
     `
-      SELECT ROLE_ID
+      SELECT ROLE_ID, ROLE, ROLE_CODE
       FROM xxafmc_role
       WHERE ROLE_ID = ?
       LIMIT 1
@@ -117,26 +158,20 @@ const getRoleForLoginType = async (loginType) => {
     [roleId]
   );
 
-  const [roleTextRows] = await db.execute(
-    `
-      SELECT ROLE
-      FROM xxafmc_role
-      WHERE ROLE_ID = 20
-      LIMIT 1
-    `
-  );
-
-  if (!roleIdRows[0] || !roleTextRows[0]) {
+  if (!roleRows[0]) {
     return null;
   }
 
   return {
-    ROLE_ID: roleIdRows[0].ROLE_ID,
-    ROLE: roleTextRows[0].ROLE,
+    ROLE_ID: roleRows[0].ROLE_ID,
+    ROLE: roleRows[0].ROLE,
+    ROLE_CODE: roleRows[0].ROLE_CODE,
+    ROLE_NAME: mapRoleName(roleRows[0].ROLE_CODE, roleRows[0].ROLE),
   };
 };
 
 const resolveRoleDetails = async ({ loginType, roleId }) => {
+  const normalizedLoginType = String(loginType || "").trim().toUpperCase();
   const normalizedRoleId = Number(roleId);
   const roleOptions = await getRoleOptionsByLoginType(loginType);
   const selectedRole = roleOptions.find(
@@ -147,18 +182,46 @@ const resolveRoleDetails = async ({ loginType, roleId }) => {
     return null;
   }
 
+  if (normalizedLoginType === "NON MEMBER") {
+    const [userRoleRows] = await db.execute(
+      `
+        SELECT ROLE
+        FROM xxafmc_role
+        WHERE ROLE_CODE = 'USER'
+        LIMIT 1
+      `
+    );
+
+    if (!userRoleRows[0]) {
+      return null;
+    }
+
+    return {
+      ROLE_ID: 30,
+      ROLE: userRoleRows[0].ROLE,
+      ROLE_CODE: "MBOP",
+      ROLE_NAME: selectedRole.ROLE_NAME,
+    };
+  }
+
+  const [roleRows] = await db.execute(
+    `
+      SELECT ROLE_ID, ROLE, ROLE_CODE
+      FROM xxafmc_role
+      WHERE ROLE_ID = ?
+      LIMIT 1
+    `,
+    [normalizedRoleId]
+  );
+
+  if (!roleRows[0]) {
+    return null;
+  }
+
   return {
     ROLE_ID: normalizedRoleId,
-    ROLE:
-      selectedRole.ROLE_NAME === "Admin"
-        ? "STMG"
-        : selectedRole.ROLE_NAME === "Order Attendant"
-          ? "MBOP"
-          : selectedRole.ROLE_NAME === "Store Keeper"
-            ? "STKP"
-            : selectedRole.ROLE_NAME === "Kitchen Admin"
-              ? "KADM"
-              : selectedRole.ROLE_NAME,
+    ROLE: roleRows[0].ROLE,
+    ROLE_CODE: roleRows[0].ROLE_CODE,
     ROLE_NAME: selectedRole.ROLE_NAME,
   };
 };
@@ -184,11 +247,7 @@ const createUser = async ({
     throw new Error("Unable to resolve role for selected login type");
   }
 
-  const md5Password = crypto
-    .createHash("md5")
-    .update(String(password))
-    .digest("hex")
-    .toUpperCase();
+  const hashedPassword = await hashPassword(password);
 
   const connection = await db.getConnection();
 
@@ -240,7 +299,7 @@ const createUser = async ({
       [
         nextUserId,
         userName,
-        md5Password,
+        hashedPassword,
         firstName,
         lastName,
         email,
@@ -249,10 +308,10 @@ const createUser = async ({
         roleDetails.ROLE_ID,
         normalizedLoginType,
         createdBy,
-        new Date().toLocaleDateString("en-US"),
+        formatToSql(new Date()),
         "A",
         "Y",
-        md5Password,
+        hashedPassword,
       ]
     );
 
@@ -327,7 +386,7 @@ const updateUser = async (
         normalizedLoginType,
         email,
         phoneNumber,
-        roleDetails.ROLE_NAME,
+        roleDetails.ROLE,
         userId,
       ]
     );
@@ -345,9 +404,6 @@ const updateUser = async (
     connection.release();
   }
 };
-
-const encryptLegacyPassword = (password) =>
-  crypto.createHash("md5").update(String(password)).digest("hex").toUpperCase();
 
 const createBulkUsers = async ({ rows, createdBy }) => {
   const connection = await db.getConnection();
@@ -450,9 +506,9 @@ const createBulkUsers = async ({ rows, createdBy }) => {
           row.lastName,
           row.fullName,
           row.email,
-          new Date(),
+          formatToSql(new Date()),
           createdBy,
-          new Date(),
+          formatToSql(new Date()),
           createdBy,
         ]
       );
@@ -464,7 +520,7 @@ const createBulkUsers = async ({ rows, createdBy }) => {
         `
       );
 
-      const encryptedPassword = encryptLegacyPassword(row.password);
+      const hashedPassword = await hashPassword(row.password);
 
       await connection.execute(
         `
@@ -484,27 +540,29 @@ const createBulkUsers = async ({ rows, createdBy }) => {
             ATTRIBUTE1,
             CONFIRM_PASSWORD,
             EMAIL,
+            PHONE_NUMBER,
             FIRST_NAME,
             LAST_NAME
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           nextUserRow?.nextUserId,
           row.email || row.userName,
-          encryptedPassword,
+          hashedPassword,
           nextOfficerId,
           role.ROLE,
           role.ROLE_ID,
           "Member",
-          "N",
+          "Y",
           createdBy,
-          new Date(),
-          new Date(),
+          formatToSql(new Date()),
+          formatToSql(new Date()),
           createdBy,
           "A",
-          encryptedPassword,
+          hashedPassword,
           row.email,
+          row.phoneNumber,
           row.firstName,
           row.lastName,
         ]
@@ -541,5 +599,3 @@ module.exports = {
   updateUser,
   createBulkUsers,
 };
-
-

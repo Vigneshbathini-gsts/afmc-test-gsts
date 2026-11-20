@@ -1,14 +1,22 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { FaTimes } from "react-icons/fa";
-import { ChevronsLeft, ShoppingCart, Heart, Share2, Star, Flame, Leaf, Zap } from "lucide-react";
+import { ChevronsLeft, Flame, Coffee, Utensils } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { useAuth } from "../../context/AuthContext";
-import { API_BASE_URL, authFetchJson, cartAPI, offersAPI } from "../../services/api";
-import Pubmenubuyservice from "../../services/Pubmenubuyservice";
+import { API_BASE_URL, authFetchJson, cartAPI, offersAPI, barOrdersAPI } from "../../services/api";
+import Pubmenubuyservice from "../../flows/buy/services/Pubmenubuyservice";
 import FilterDropdown from "./FilterDropdown";
+import OffersMarquee from "./OffersMarquee";
+import { toInitCap } from "../../utils/textFormat";
+import { getCartCount } from "../../utils/cartCount";
+import { getPegTypeOrderLimitMessage } from "../../utils/stockValidation";
+import {
+  clearSelectedAttendantCustomer,
+  getSelectedAttendantCustomerPayload,
+} from "../../utils/attendantCustomer";
 
-const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCIMAGES/";
+const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST/";
 
 const menuConfig = {
   drinks: {
@@ -43,6 +51,7 @@ const menuConfig = {
 };
 
 const hardDrinkCategories = [
+  { label: "All", value: "all" },
   { label: "Beer", value: "beer" },
   { label: "Brandy", value: "brandy" },
   { label: "Breezer", value: "breezer" },
@@ -61,15 +70,27 @@ function CategoryButton({ active, label, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full px-5 py-2.5 text-sm font-bold transition-all duration-300 transform ${
-        active
+      className={`rounded-full px-5 py-2.5 text-sm font-bold transition-all duration-300 transform ${active
           ? "bg-gradient-to-r from-afmc-maroon to-afmc-maroon/80 text-white shadow-lg shadow-afmc-maroon/30 scale-105"
           : "bg-white text-gray-700 ring-2 ring-gray-200 hover:ring-afmc-maroon/30 hover:text-afmc-maroon hover:shadow-md"
-      }`}
+        }`}
     >
-      {label}
+      {toInitCap(label)}
     </button>
   );
+}
+
+function getStockQuantity(item) {
+  const rawValue =
+    item?.availableQuantity ??
+    item?.available_quantity ??
+    item?.stockQuantity ??
+    item?.stock_quantity ??
+    item?.STOCK_QUANTITY ??
+    item?.quantity ??
+    item?.QUANTITY;
+  const numericValue = Number(rawValue);
+  return Number.isFinite(numericValue) ? numericValue : null;
 }
 
 function formatPrice(value) {
@@ -81,177 +102,30 @@ function formatPrice(value) {
   return numericValue.toFixed(2);
 }
 
-function isOfferActive(statusValue) {
-  if (statusValue === true || statusValue === 1) return true;
-  if (typeof statusValue === "string") {
-    const normalized = statusValue.trim().toLowerCase();
-    return ["active", "enabled", "yes", "y", "true", "1"].includes(normalized);
-  }
+function isOutOfStock(item) {
+  const status = String(item?.stockStatus ?? item?.stock_status ?? "").trim().toLowerCase();
+  if (status === "out of stock") return true;
+
+  const stockQuantity = getStockQuantity(item);
+  if (stockQuantity !== null) return stockQuantity <= 0;
   return false;
 }
 
-function formatOfferLine(offer) {
-  const offerQty = Number(offer?.offer_quantity);
-  const freeQty = Number(offer?.free_item_quantity);
-  const itemName = offer?.item_name || "Item";
-  const freeItemName = offer?.free_item || "Free item";
+function isCocktailOrMocktailItem(item) {
+  const subCategory = Number(item?.sub_category ?? item?.subcategory);
+  if (![14, 15].includes(subCategory)) return false;
 
-  if (!Number.isNaN(offerQty) && offerQty > 0 && freeItemName) {
-    const freePart = !Number.isNaN(freeQty) && freeQty > 0 ? `Get ${freeQty}` : "Get";
-    return `Buy ${offerQty} ${itemName} • ${freePart} ${freeItemName}`;
-  }
-
-  return offer?.message || `Offer on ${itemName}`;
+  const categoryId = Number(item?.category_id ?? item?.categoryId);
+  return !Number.isFinite(categoryId) || categoryId === 10;
 }
 
-function OfferIcon({ kind }) {
-  const Icon = kind === "hot" ? Flame : kind === "new" ? Zap : kind === "veg" ? Leaf : Star;
-  return <Icon className="h-4 w-4" />;
+function getMenuItemCode(item) {
+  const itemCode = Number(item?.item_code ?? item?.itemCode ?? item?.ITEM_CODE ?? item?.item_id);
+  return Number.isFinite(itemCode) && itemCode > 0 ? itemCode : null;
 }
 
+// Legacy popup retained for compatibility with older dashboard state.
 // eslint-disable-next-line no-unused-vars
-function _OffersScroller({ offers, loading, onShare }) {
-  const [likedIds, setLikedIds] = useState(() => new Set());
-
-  const visibleOffers = useMemo(() => {
-    const list = Array.isArray(offers) ? offers : [];
-    const activeFirst = [...list].sort((a, b) => Number(isOfferActive(b?.status)) - Number(isOfferActive(a?.status)));
-    return activeFirst.slice(0, 10);
-  }, [offers]);
-
-  if (loading) {
-    return (
-      <div className="mb-6">
-        <div className="mb-2 flex items-end justify-between gap-4">
-          <div>
-            <div className="h-5 w-40 animate-pulse rounded bg-gray-200" />
-            <div className="mt-2 h-4 w-64 animate-pulse rounded bg-gray-100" />
-          </div>
-        </div>
-        <div className="flex gap-3 overflow-hidden">
-          {Array.from({ length: 3 }).map((_, idx) => (
-            <div key={idx} className="h-[112px] w-[280px] shrink-0 animate-pulse rounded-2xl border border-gray-200 bg-white" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (!visibleOffers.length) {
-    return null;
-  }
-
-  return (
-    <div className="mb-6">
-      <div className="mb-2 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-base font-bold text-gray-900">Offers</h2>
-          <p className="mt-0.5 text-xs text-gray-600">Swipe to see today's deals</p>
-        </div>
-      </div>
-
-      <div className="relative -mx-4 px-4">
-        <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 pr-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {visibleOffers.map((offer) => {
-            const offerId = String(offer?.offer_id ?? offer?.id ?? `${offer?.item_code ?? "x"}-${offer?.free_item_code ?? "y"}`);
-            const active = isOfferActive(offer?.status);
-            const liked = likedIds.has(offerId);
-            const kind = active ? "hot" : "new";
-
-            return (
-              <div
-                key={offerId}
-                className="group relative w-[280px] shrink-0 snap-start overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition hover:shadow-md"
-              >
-                <div className="absolute inset-0 opacity-[0.18] transition group-hover:opacity-[0.28]">
-                  <svg viewBox="0 0 600 240" className="h-full w-full">
-                    <defs>
-                      <linearGradient id={`g-${offerId}`} x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stopColor="#7a0b2e" />
-                        <stop offset="55%" stopColor="#caa84a" />
-                        <stop offset="100%" stopColor="#7a0b2e" />
-                      </linearGradient>
-                    </defs>
-                    <path
-                      d="M0,160 C120,110 200,210 320,160 C440,110 500,40 600,90 L600,240 L0,240 Z"
-                      fill={`url(#g-${offerId})`}
-                    />
-                    <circle cx="92" cy="70" r="18" fill={`url(#g-${offerId})`} opacity="0.6" />
-                    <circle cx="520" cy="60" r="26" fill={`url(#g-${offerId})`} opacity="0.5" />
-                  </svg>
-                </div>
-
-                <div className="relative p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="inline-flex items-center gap-2 rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-gray-800 ring-1 ring-black/5">
-                        <span className={`inline-flex items-center gap-1.5 ${active ? "text-red-700" : "text-afmc-maroon"}`}>
-                          <OfferIcon kind={kind} />
-                          {active ? "Active" : "Promo"}
-                        </span>
-                      </div>
-
-                      <div className="mt-3 text-sm font-semibold leading-snug text-gray-900">
-                        {formatOfferLine(offer)}
-                      </div>
-
-                      {offer?.message ? (
-                        <div className="mt-1 line-clamp-2 text-xs text-gray-600">
-                          {offer.message}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="flex shrink-0 flex-col items-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setLikedIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(offerId)) next.delete(offerId);
-                            else next.add(offerId);
-                            return next;
-                          })
-                        }
-                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/90 ring-1 ring-black/5 transition hover:bg-white ${
-                          liked ? "text-red-600" : "text-gray-700"
-                        }`}
-                        aria-label={liked ? "Remove from favorites" : "Add to favorites"}
-                      >
-                        <Heart className={`h-4 w-4 ${liked ? "fill-current" : ""}`} />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onShare?.(offer)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-gray-700 ring-1 ring-black/5 transition hover:bg-white"
-                        aria-label="Share offer"
-                      >
-                        <Share2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between">
-                    <div className="inline-flex items-center gap-2 text-xs font-semibold text-gray-700">
-                      <ShoppingCart className="h-4 w-4 text-afmc-maroon" />
-                      Add from menu below
-                    </div>
-
-                    <span className="rounded-full bg-white/90 px-2 py-1 text-[11px] font-semibold text-afmc-maroon ring-1 ring-black/5">
-                      {offer?.offer_date ? String(offer.offer_date).slice(0, 10) : "Today"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function MenuPopup({ item, loading, onClose }) {
   const [qty, setQty] = useState("1");
   const [remarks, setRemarks] = useState("Din");
@@ -329,27 +203,24 @@ function MenuPopup({ item, loading, onClose }) {
                 <div className="flex flex-col gap-2 sm:gap-2.5">
                   <div className="text-center sm:text-left">
                     <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 leading-tight break-words">
-                      {item?.item_name || "-"}
+                      {toInitCap(item?.item_name) || "-"}
                     </h2>
-                    {item.stock_status ? (
+                    {!isCocktailOrMocktailItem(item) && item.stock_status ? (
                       <div className="mt-2">
                         <span className="inline-flex items-center rounded-full bg-red-50 px-3 py-1 text-[11px] font-bold text-red-700 ring-1 ring-red-200">
-                          {item.stock_status}
+                          {toInitCap(item.stock_status)}
                         </span>
                       </div>
                     ) : null}
                   </div>
 
                   <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
+
                     <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs font-bold uppercase tracking-wider text-gray-500">Price</div>
-                      <div className="text-xl font-extrabold text-afmc-maroon">
-                        ₹{formatPrice(item?.unit_price)}
-                      </div>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between gap-3">
                       <div className="text-xs font-bold uppercase tracking-wider text-gray-500">Unit</div>
-                      <div className="text-sm font-bold text-gray-900">{item?.ac_unit || "Nos"}</div>
+                      <div className="text-sm font-bold text-gray-900">
+                        {toInitCap(item?.ac_unit) || "Nos"}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -395,8 +266,8 @@ function MenuPopup({ item, loading, onClose }) {
                   onChange={(e) => setRemarks(e.target.value)}
                   className="h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold text-gray-800 outline-none transition focus:border-afmc-maroon focus:ring-2 focus:ring-afmc-maroon/20"
                 >
-                  <option value="Din">Dine In</option>
-                  <option value="Take Away">Take Away</option>
+                  <option value="Din">{toInitCap("Dine In")}</option>
+                  <option value="Take Away">{toInitCap("Take Away")}</option>
                 </select>
               </div>
             </div>
@@ -410,14 +281,14 @@ function MenuPopup({ item, loading, onClose }) {
                 type="button"
                 className="w-full rounded-lg bg-afmc-maroon px-4 py-3 font-bold text-white transition-all hover:bg-afmc-maroon/90 active:scale-[0.99]"
               >
-                Add to Cart
+                {toInitCap("Add to cart")}
               </button>
               <button
                 type="button"
                 onClick={onClose}
                 className="w-full rounded-lg border border-gray-300 px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50"
               >
-                Cancel
+                {toInitCap("Cancel")}
               </button>
             </div>
           </div>
@@ -427,64 +298,78 @@ function MenuPopup({ item, loading, onClose }) {
   );
 }
 
-function MenuGrid({ items, showStockStatus = false, onItemClick }) {
+function MenuGrid({ items, showStockStatus = false, ignoreStockStatus = false, onItemClick }) {
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-5">
-      {items.map((item, index) => (
-        <button
-          type="button"
-          onClick={() => onItemClick?.(item)}
-          key={item.item_id || item.item_code || `${item.item_name}-${index}`}
-          className="group relative overflow-hidden rounded-xl border border-gray-300 bg-white text-left shadow-sm transition-all duration-300 hover:shadow-md hover:border-afmc-maroon/50 focus:outline-none focus:ring-2 focus:ring-afmc-maroon"
-        >
-          {/* Image Container */}
-          <div className="relative aspect-square w-full overflow-hidden bg-gray-100">
-            <img
-              src={`${BASEAPI}${item.image || "default.jpg"}`}
-              alt={item.item_name}
-              className="h-full w-full object-contain p-3 transition-transform duration-300 group-hover:scale-105"
-            />
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-3.5 lg:grid-cols-5 xl:grid-cols-5">
+      {items.map((item, index) => {
+        const shouldIgnoreStock = ignoreStockStatus || isCocktailOrMocktailItem(item);
+        const outOfStock = !shouldIgnoreStock && isOutOfStock(item);
+        const stockDisabled = outOfStock;
+        const stockStatus = outOfStock ? "Out Of Stock" : item.stock_status;
 
-            {/* Stock Status Badge */}
-            {showStockStatus && item.stock_status && (
-              <div className="absolute left-2 top-2 rounded-md bg-red-600 text-white px-2 py-1 text-xs font-bold shadow">
-                {item.stock_status}
-              </div>
-            )}
-          </div>
+        return (
+          <button
+            type="button"
+            onClick={() => {
+              if (stockDisabled) return;
+              onItemClick?.(item);
+            }}
+            disabled={stockDisabled}
+            key={item.item_id || item.item_code || `${item.item_name}-${index}`}
+            className={`group relative overflow-hidden rounded-xl border border-gray-200 bg-white text-left shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-afmc-maroon ${stockDisabled
+                ? "cursor-not-allowed opacity-75"
+                : "hover:-translate-y-0.5 hover:border-afmc-maroon/30 hover:shadow-[0_14px_30px_rgba(15,23,42,0.11)]"
+              }`}
+          >
+            {/* Image Container */}
+            <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-gray-50 via-white to-[#f7f0e5]">
+              <div className="absolute inset-x-5 bottom-3 h-7 rounded-full bg-afmc-gold/10 blur-xl" aria-hidden="true" />
+              <img
+                src={`${BASEAPI}${item.image || "default.jpg"}`}
+                alt={item.item_name}
+                className={`relative h-full w-full object-contain p-3.5 transition-transform duration-300 ${stockDisabled ? "blur-[2px] grayscale opacity-60" : "group-hover:scale-105"
+                  }`}
+              />
 
-          {/* Content */}
-          <div className="space-y-2 p-3">
-            <div className="line-clamp-2 text-sm font-semibold text-gray-900 leading-tight">
-              {item.item_name}
+              {/* Stock Status Badge */}
+              {!shouldIgnoreStock && (outOfStock || (showStockStatus && item.stock_status)) && (
+                <div className="absolute left-2 top-2 rounded-md bg-red-600 text-white px-2 py-1 text-xs font-bold shadow">
+                  {toInitCap(stockStatus)}
+                </div>
+              )}
             </div>
 
-            {item.unit_price && (
-              <div className="flex items-center justify-between pt-2 border-t border-gray-200">
-                <div className="text-lg font-bold text-afmc-maroon">
-                  â‚¹{formatPrice(item.unit_price)}
-                </div>
-                <div className="flex items-center gap-0.5 bg-amber-50 px-2 py-0.5 rounded">
-                  <Star size={12} className="text-amber-500" fill="currentColor" />
-                  <span className="text-xs font-bold text-gray-700">4.5</span>
-                </div>
+            {/* Content */}
+            <div className="space-y-2 p-3">
+              <div className="line-clamp-2 text-[13px] font-extrabold leading-tight text-gray-900 sm:text-sm">
+                {toInitCap(item.item_name)}
+                {/* <p> {item.stock_status} </p> */}
               </div>
-            )}
 
-            {/* CTA Button */}
-            {/* <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onItemClick?.(item);
-              }}
-              className="w-full mt-2 py-2 px-3 rounded-lg bg-afmc-maroon text-white text-xs font-bold transition-all duration-300 hover:bg-afmc-maroon/90 active:scale-95"
-            >
-              Add to Cart
-            </button> */}
-          </div>
-        </button>
-      ))}
+              {/* {outOfStock ? (
+                <div className="rounded-md bg-red-50 px-2 py-1 text-xs font-bold text-red-700 ring-1 ring-red-200">
+                  {toInitCap("Out Of Stock")}
+                </div>
+              ) : null} */}
+
+              <div className="h-0.5 rounded-full bg-gradient-to-r from-afmc-maroon/70 via-afmc-gold/70 to-transparent" />
+
+              {/* CTA Button */}
+              {/* <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (outOfStock) return;
+                  onItemClick?.(item);
+                }}
+                className="w-full mt-2 py-2 px-3 rounded-lg bg-afmc-maroon text-white text-xs font-bold transition-all duration-300 hover:bg-afmc-maroon/90 active:scale-95"
+              >
+                Add to Cart
+              </button> */}
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -493,33 +378,151 @@ function MenuPopupCompact({ item, loading, onClose, onBuy }) {
   const { user, setCartCount } = useAuth();
   const [qty, setQty] = useState("1");
   const [remarks, setRemarks] = useState("Din");
+  const [pegType, setPegType] = useState("Small");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const userId = user?.userId;
+  const isMocktailItem = isCocktailOrMocktailItem(item);
+  const acUnit = item?.ac_unit || item?.["A/C_UNIT"] || "Nos";
+  const isPegsUnit = String(acUnit).trim().toLowerCase() === "pegs";
+  const selectedQuantity = Math.max(Number(qty) || 1, 1);
+  const displayedPrice =
+    Number(item?.unit_price || 0) +
+    Math.max(selectedQuantity - 1, 0) * Number(item?.pr_charges || 0);
 
   const fetchCartCount = async () => {
     if (!userId) return;
     try {
       const response = await cartAPI.getByUserId(userId);
       const items = response?.data?.data || [];
-      setCartCount?.(items.length);
+      setCartCount?.(getCartCount(items));
     } catch (err) {
       console.error("Error fetching cart count:", err);
     }
   };
 
+  const getPegMultiplier = (type) => {
+    return String(type || "").trim().toLowerCase() === "large" ? 2 : 1;
+  };
+
   const handleAddToCart = async () => {
     if (!item) return;
 
+    const quantityValue = Number(qty);
+    if (!Number.isInteger(quantityValue) || quantityValue < 1) {
+      toast.error("Quantity must be at least 1");
+      return;
+    }
+
+    if (isPegsUnit && !pegType) {
+      toast.error("Select the type");
+      return;
+    }
+
+    const pegMultiplier = getPegMultiplier(pegType);
+
     try {
       setIsSubmitting(true);
+      const menuSearchParams = new URLSearchParams(window.location.search);
+      const selectedPubmed = String(
+        window.history.state?.usr?.pubmed ||
+        menuSearchParams.get("pubmed") ||
+        window.history.state?.usr?.pubmedName ||
+        menuSearchParams.get("pubmedName") ||
+        sessionStorage.getItem("afmc:selectedPubmed") ||
+        ""
+      ).trim() || null;
+      const selectedPubmedName = String(
+        window.history.state?.usr?.pubmedName ||
+        menuSearchParams.get("pubmedName") ||
+        window.history.state?.usr?.pubmed ||
+        menuSearchParams.get("pubmed") ||
+        sessionStorage.getItem("afmc:selectedPubmedName") ||
+        ""
+      ).trim() || null;
+
+      if (selectedPubmed) {
+        sessionStorage.setItem("afmc:selectedPubmed", selectedPubmed);
+      }
+      if (selectedPubmedName) {
+        sessionStorage.setItem("afmc:selectedPubmedName", selectedPubmedName);
+      }
       const cartData = {
-        item_id: item?.item_id || item?.item_code,
+        // Server cart module expects inventory ITEM_CODE in `item_id`.
+        // Menu popup also has `item_id` (inventory ITEM_ID), which would break stock lookup.
+        item_id: item?.item_code ?? item?.item_id,
         item_name: item?.item_name,
-        quantity: parseInt(qty, 10) || 1,
+        quantity: quantityValue,
         unit_price: item?.unit_price,
         remarks,
+        type: isPegsUnit ? pegType : null,
       };
+
+      // console.log("Adding to cart with data:", cartData);
+
+      // Reservation/stock checks before adding to cart
+      try {
+        const desiredQty = Number(cartData.quantity || 1) || 1;
+        const itemCode = Number(item?.item_code ?? item?.item_id) || null;
+
+        if (isMocktailItem && Number.isFinite(itemCode) && itemCode > 0) {
+          // For cocktails/mocktails, validate ingredient stocks
+          try {
+            const res = await barOrdersAPI.getCocktailDetailsById(itemCode);
+            const details = res?.data?.data?.details || [];
+            const ingredients = (details || [])
+              .map((d) => ({
+                itemCode: Number(d?.ITEM_CODE ?? d?.itemCode),
+                pegs: Number(d?.PEGS ?? d?.pegs ?? d?.QUANTITY ?? d?.quantity ?? 0) || 0,
+                itemName: String(d?.ITEM_NAME ?? d?.itemName ?? "").trim(),
+              }))
+              .filter((x) => Number.isFinite(x.itemCode) && x.itemCode > 0 && x.pegs > 0);
+
+            if (ingredients.length > 0) {
+              const codes = [...new Set(ingredients.map((ing) => ing.itemCode))];
+              const stockRes = await cartAPI.getIngredientStocks(codes, undefined, undefined, undefined, true);
+              const stockMap = stockRes?.data?.data || {};
+
+              for (const ing of ingredients) {
+                const rawAvailable = stockMap?.[String(ing.itemCode)];
+                if (rawAvailable === undefined || rawAvailable === null || rawAvailable === "") continue;
+                const available = Number(rawAvailable);
+                if (!Number.isFinite(available) || available < 0) continue;
+                const required = ing.pegs * desiredQty * pegMultiplier;
+                if (required > available) {
+                  const msg = `Out of stock for ingredient ${ing.itemName || ing.itemCode}. Available quantity: ${available}`;
+                  toast.error(msg);
+                  setIsSubmitting(false);
+                  return;
+                }
+              }
+            }
+          } catch (err) {
+            throw err;
+          }
+        } else if (Number.isFinite(itemCode) && itemCode > 0) {
+          // For regular items, check available quantity (reservation-aware via API)
+          try {
+            const stockRes = await cartAPI.getIngredientStocks([itemCode], undefined, undefined, undefined, true);
+            const stockMap = stockRes?.data?.data || {};
+            const rawAvailable = stockMap?.[String(itemCode)];
+            if (rawAvailable !== undefined && rawAvailable !== null && rawAvailable !== "") {
+              const available = Number(rawAvailable);
+              if (Number.isFinite(available) && available >= 0 && desiredQty * pegMultiplier > available) {
+                toast.error(getPegTypeOrderLimitMessage(item, available, `Out of stock. Available quantity: ${available}`, pegType));
+                setIsSubmitting(false);
+                return;
+              }
+            }
+          } catch (err) {
+            throw err;
+          }
+        }
+      } catch (err) {
+        const message = err?.response?.data?.message || err?.message || "Unable to verify item stock.";
+        toast.error(message);
+        return;
+      }
 
       const response = await cartAPI.addItem(cartData);
       toast.success("Item added to cart!");
@@ -535,6 +538,40 @@ function MenuPopupCompact({ item, loading, onClose, onBuy }) {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const isQuantityValid = Number.isInteger(Number(qty)) && Number(qty) >= 1;
+
+  const handleBuyNow = () => {
+    const trimmedRemarks = String(remarks || "").trim();
+    const quantityValue = Number(qty);
+
+    if (isPegsUnit && !pegType) {
+      toast.error("Select the type");
+      return;
+    }
+
+    if (!trimmedRemarks) {
+      toast.error("Remarks is required");
+      return;
+    }
+
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      toast.error("Valid quantity is required");
+      return;
+    }
+
+    if (!Number.isInteger(quantityValue)) {
+      toast.error("Quantity is not in decimals");
+      return;
+    }
+
+    if (isMocktailItem && quantityValue > 5) {
+      toast.error("Quantity must be 5 or less");
+      return;
+    }
+
+    onBuy?.(item, quantityValue, trimmedRemarks, isPegsUnit ? pegType || null : null);
   };
 
   useEffect(() => {
@@ -558,12 +595,16 @@ function MenuPopupCompact({ item, loading, onClose, onBuy }) {
     };
   }, [item, loading, onClose]);
 
+  useEffect(() => {
+    setPegType(isPegsUnit ? "Small" : "");
+  }, [item?.item_id, item?.item_code, isPegsUnit]);
+
   if (!item && !loading) {
     return null;
   }
 
   const imageSrc = `${BASEAPI}${item?.image || "default.jpg"}`;
-  const acUnit = item?.ac_unit || item?.["A/C_UNIT"] || "Nos";
+  const itemName = toInitCap(item?.item_name) || "-";
 
   return (
     <div
@@ -621,51 +662,96 @@ function MenuPopupCompact({ item, loading, onClose, onBuy }) {
 
               <div className="min-w-0 space-y-5">
                 <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_140px] md:items-start">
-                  <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
-                    <div className="text-[14px] font-semibold leading-5 text-stone-600">Item Name</div>
-                    <h2 className="text-[18px] font-bold uppercase leading-6 text-stone-900">
-                      {item?.item_name || "-"}
-                    </h2>
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-[14px] font-semibold leading-5 text-stone-600">
+                          {toInitCap("Item Name")}
+                        </div>
+                        <h2 className="mt-1 text-[18px] font-bold leading-6 text-stone-900 break-words">
+                          {itemName}
+                        </h2>
+                      </div>
 
-                    <div className="text-[14px] font-semibold leading-5 text-stone-600">A/C Unit</div>
-                    <div>
-                      <div className="h-11 w-full rounded border border-stone-300 bg-white px-3 text-[15px] font-medium text-stone-700">
-                        <span className="flex h-full items-center">{acUnit}</span>
+                      <div className="shrink-0 text-right">
+                        <div className="text-[14px] font-semibold leading-5 text-stone-600">
+                          {toInitCap("Price")}
+                        </div>
+                        <div className="mt-1 text-[18px] font-extrabold leading-6 text-afmc-maroon">
+                          ₹{formatPrice(displayedPrice)}
+                        </div>
                       </div>
                     </div>
 
-                    <div className="text-[14px] font-semibold leading-5 text-stone-600">Qty</div>
-                    <div>
-                      <input
-                        type="number"
-                        min="1"
-                        value={qty}
-                        onChange={(e) => setQty(e.target.value)}
-                        className="h-11 w-full rounded border border-stone-300 bg-white px-3 text-[15px] font-medium text-stone-900 outline-none transition focus:border-afmc-maroon focus:ring-2 focus:ring-afmc-maroon/20"
-                        inputMode="numeric"
-                      />
-                    </div>
+                    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+                      <div className="text-[14px] font-semibold leading-5 text-stone-600">
+                        {toInitCap("A/C Unit")}
+                      </div>
+                      <div>
+                        <div className="h-11 w-full rounded border border-stone-300 bg-white px-3 text-[15px] font-medium text-stone-700">
+                          <span className="flex h-full items-center">{toInitCap(acUnit) || "Nos"}</span>
+                        </div>
+                      </div>
 
-                    <div className="text-[14px] font-semibold leading-5 text-stone-600">Remarks</div>
-                    <div>
-                      <select
-                        value={remarks}
-                        onChange={(e) => setRemarks(e.target.value)}
-                        className="h-11 w-full rounded border border-stone-300 bg-white px-3 text-[15px] font-medium text-stone-800 outline-none transition focus:border-afmc-maroon focus:ring-2 focus:ring-afmc-maroon/20"
-                      >
-                        <option value="Din">Dine In</option>
-                        <option value="Take Away">Take Away</option>
-                      </select>
+                      <div className="text-[14px] font-semibold leading-5 text-stone-600">
+                        {toInitCap("Quantity")}
+                      </div>
+                      <div>
+                        <input
+                          type="number"
+                          min="1"
+                          value={qty}
+                          onChange={(e) =>
+                            Number(e.target.value) <= 999 && setQty(e.target.value)
+                          }
+                          className="h-11 w-full rounded border border-stone-300 bg-white px-3 text-[15px] font-medium text-stone-900 outline-none transition focus:border-afmc-maroon focus:ring-2 focus:ring-afmc-maroon/20"
+                          inputMode="numeric"
+                        />
+                      </div>
+
+                      {isPegsUnit ? (
+                        <>
+                          <div className="text-[14px] font-semibold leading-5 text-stone-600">
+                            {toInitCap("Type")}
+                          </div>
+                          <div>
+                            <select
+                              value={pegType}
+                              onChange={(e) => setPegType(e.target.value)}
+                              className="h-11 w-full rounded border border-stone-300 bg-white px-3 text-[15px] font-medium text-stone-800 outline-none transition focus:border-afmc-maroon focus:ring-2 focus:ring-afmc-maroon/20"
+                            >
+                              <option value="Small">{toInitCap("Small")}</option>
+                              <option value="Large">{toInitCap("Large")}</option>
+                            </select>
+                          </div>
+                        </>
+                      ) : null}
+
+                      <div className="text-[14px] font-semibold leading-5 text-stone-600">
+                        {toInitCap("Remarks")}
+                      </div>
+                      <div>
+                        <select
+                          value={remarks}
+                          onChange={(e) => setRemarks(e.target.value)}
+                          className="h-11 w-full rounded border border-stone-300 bg-white px-3 text-[15px] font-medium text-stone-800 outline-none transition focus:border-afmc-maroon focus:ring-2 focus:ring-afmc-maroon/20"
+                        >
+                          <option value="Din">{toInitCap("Dine In")}</option>
+                          <option value="Take Away">{toInitCap("Take Away")}</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-[auto_auto] items-start justify-start gap-x-4 gap-y-1 md:justify-end">
-                    <div className="text-[14px] font-semibold leading-5 text-stone-600">Price</div>
-                    <div className="text-[18px] font-bold text-stone-900">{formatPrice(item?.unit_price)}</div>
-                    {item?.stock_status ? (
+                    {!isMocktailItem && item?.stock_status ? (
                       <>
-                        <div className="text-[14px] font-semibold leading-5 text-stone-600">Status</div>
-                        <div className="text-[14px] font-medium text-red-600">{item.stock_status}</div>
+                        <div className="text-[14px] font-semibold leading-5 text-stone-600">
+                          {toInitCap("Status")}
+                        </div>
+                        <div className="text-[14px] font-medium text-red-600">
+                          {toInitCap(item.stock_status)}
+                        </div>
                       </>
                     ) : null}
                   </div>
@@ -675,24 +761,24 @@ function MenuPopupCompact({ item, loading, onClose, onBuy }) {
                   <button
                     type="button"
                     onClick={handleAddToCart}
-                    disabled={isSubmitting}
-                    className="min-w-[170px] rounded-full border border-[#7BA43A] px-8 py-3 text-sm font-semibold text-[#5F8A22] transition hover:bg-[#7BA43A]/10"
+                    disabled={isSubmitting || !isQuantityValid}
+                    className="min-w-[170px] rounded-full bg-afmc-maroon px-8 py-3 text-sm font-semibold text-white shadow-sm ring-1 ring-afmc-gold/25 transition hover:bg-afmc-maroon/90 disabled:cursor-not-allowed disabled:opacity-70"
                   >
-                    {isSubmitting ? "Adding..." : "Add to cart"}
+                    {isSubmitting ? toInitCap("Adding...") : toInitCap("Add to cart")}
                   </button>
                   <button
                     type="button"
-                    onClick={() => onBuy?.(item, qty, remarks)}
-                    className="min-w-[90px] rounded-full border border-[#7BA43A] px-8 py-3 text-sm font-semibold text-[#5F8A22] transition hover:bg-[#7BA43A]/10"
+                    onClick={handleBuyNow}
+                    className="min-w-[90px] rounded-full bg-white px-8 py-3 text-sm font-semibold text-afmc-maroon shadow-sm ring-1 ring-afmc-gold/35 transition hover:bg-afmc-gold/5"
                   >
-                    Buy
+                    {toInitCap("Buy")}
                   </button>
                   <button
                     type="button"
                     onClick={onClose}
-                    className="min-w-[130px] rounded-full border border-red-400 px-8 py-3 text-sm font-semibold text-red-500 transition hover:bg-red-50"
+                    className="min-w-[130px] rounded-full bg-white px-8 py-3 text-sm font-semibold text-stone-700 shadow-sm ring-1 ring-stone-300 transition hover:bg-stone-50"
                   >
-                    Cancel
+                    {toInitCap("Cancel")}
                   </button>
                 </div>
               </div>
@@ -736,11 +822,13 @@ function BottomLoader({ label = "Loading more..." }) {
 function ProgressiveMenuGrid({
   items,
   showStockStatus = false,
+  ignoreStockStatus = false,
   onItemClick,
   initialCount = 20,
   step = 20,
 }) {
   const [visibleCount, setVisibleCount] = useState(initialCount);
+  const [availabilityByCode, setAvailabilityByCode] = useState({});
   const sentinelRef = React.useRef(null);
 
   useEffect(() => {
@@ -749,6 +837,81 @@ function ProgressiveMenuGrid({
 
   const hasMore = visibleCount < items.length;
   const slice = useMemo(() => items.slice(0, visibleCount), [items, visibleCount]);
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadAvailability = async () => {
+      if (ignoreStockStatus || slice.length === 0) {
+        if (alive) setAvailabilityByCode({});
+        return;
+      }
+
+      const codes = [
+        ...new Set(
+          slice
+            .filter((item) => !isCocktailOrMocktailItem(item))
+            .map((item) => getMenuItemCode(item))
+            .filter((code) => Number.isFinite(code) && code > 0)
+        ),
+      ];
+
+      if (codes.length === 0) {
+        if (alive) setAvailabilityByCode({});
+        return;
+      }
+
+      try {
+        // Dashboard tiles should reflect true remaining physical stock, not
+        // stock minus what this same user already put in their own cart.
+        // Otherwise, adding the last N units to the cart makes the tile show
+        // "Out of Stock" even though those units are still buyable by this
+        // same user via the buy flow. excludeCartId/orderNumber are left
+        // unset here on purpose; ignoreOwnCart=true skips the own-cart
+        // subtraction entirely on the backend.
+        const response = await cartAPI.getIngredientStocks(codes, undefined, undefined, undefined, true);
+        const stockMap = response?.data?.data || {};
+        if (!alive) return;
+        setAvailabilityByCode((current) => {
+          const next = { ...current };
+          codes.forEach((code) => {
+            const rawValue = stockMap?.[String(code)];
+            const available = Number(rawValue);
+            if (Number.isFinite(available) && available >= 0) {
+              next[String(code)] = available;
+            }
+          });
+          return next;
+        });
+      } catch (error) {
+        if (!alive) return;
+        console.error("Menu stock availability fetch error:", error);
+      }
+    };
+
+    loadAvailability();
+    return () => {
+      alive = false;
+    };
+  }, [ignoreStockStatus, slice]);
+
+  const stockAwareItems = useMemo(() => {
+    if (ignoreStockStatus) return slice;
+
+    return slice.map((item) => {
+      if (isCocktailOrMocktailItem(item)) return item;
+      const itemCode = getMenuItemCode(item);
+      const availableQuantity = itemCode ? availabilityByCode[String(itemCode)] : undefined;
+      if (availableQuantity === undefined) return item;
+
+      return {
+        ...item,
+        availableQuantity,
+        stockQuantity: availableQuantity,
+        stock_status: item.stock_status,
+      };
+    });
+  }, [availabilityByCode, ignoreStockStatus, slice]);
 
   useEffect(() => {
     if (!hasMore) return undefined;
@@ -770,7 +933,12 @@ function ProgressiveMenuGrid({
 
   return (
     <div>
-      <MenuGrid items={slice} showStockStatus={showStockStatus} onItemClick={onItemClick} />
+      <MenuGrid
+        items={stockAwareItems}
+        showStockStatus={showStockStatus}
+        ignoreStockStatus={ignoreStockStatus}
+        onItemClick={onItemClick}
+      />
       {hasMore ? <BottomLoader /> : null}
       <div ref={sentinelRef} />
     </div>
@@ -779,18 +947,25 @@ function ProgressiveMenuGrid({
 
 function MenuHeader({ onBack }) {
   return (
-    <div className="border-b border-gray-300 bg-white shadow-sm">
-      <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Menu</h1>
-            <p className="mt-0.5 text-xs text-gray-600">Select items to add to cart</p>
+    <div className="border-b border-afmc-maroon/10 bg-gradient-to-r from-[#fffdf8] via-white to-[#f7efe6] shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
+      <div className="mx-auto max-w-7xl px-4 py-3.5 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-afmc-maroon text-white shadow-lg shadow-afmc-maroon/20" aria-hidden="true">
+                <Utensils className="h-[18px] w-[18px]" />
+              </span>
+              <div>
+                <h1 className="text-xl font-extrabold tracking-tight text-gray-950 sm:text-2xl">Menu</h1>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-afmc-maroon/70">Add items to cart</p>
+              </div>
+            </div>
           </div>
 
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition-all hover:bg-gray-100"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-3.5 py-2 text-sm font-bold text-gray-700 shadow-sm transition-all hover:border-afmc-maroon/25 hover:bg-white hover:text-afmc-maroon hover:shadow"
           >
             <ChevronsLeft className="h-4 w-4" />
             Back
@@ -802,24 +977,101 @@ function MenuHeader({ onBack }) {
 }
 
 function ScrollTabs({ items, activeKey, onChange }) {
+  const few = Array.isArray(items) && items.length <= 2;
+
   return (
     <div className="w-full">
-      <div className="flex snap-x snap-mandatory items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {items.map((it) => {
-          const active = activeKey === it.key;
+      {few ? (
+        items.length === 1 ? (
+          <div className="grid grid-cols-1 gap-2">
+            {items.map((it) => (
+              <button
+                key={it.key}
+                type="button"
+                onClick={() => onChange(it.key)}
+                className={`w-full rounded-full px-4 py-2 text-sm font-bold transition text-gray-700 hover:bg-white hover:text-afmc-maroon`}
+                aria-current={activeKey === it.key ? "page" : undefined}
+              >
+                <span className="whitespace-nowrap">{it.label}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="inline-grid grid-cols-2 rounded-full bg-white/80 p-1.5 shadow-sm ring-1 ring-gray-200">
+            {items.map((it) => {
+              const active = activeKey === it.key;
+              return (
+                <button
+                  key={it.key}
+                  type="button"
+                  onClick={() => onChange(it.key)}
+                  className={`w-full rounded-full px-5 py-2 text-sm font-extrabold transition ${active
+                      ? "bg-gray-950 text-white shadow-sm"
+                      : "bg-transparent text-gray-700 hover:bg-gray-50 hover:text-afmc-maroon"
+                    }`}
+                  aria-pressed={active}
+                >
+                  {it.label}
+                </button>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        <div className="flex snap-x snap-mandatory items-center gap-2 overflow-x-auto rounded-full bg-white/70 p-1 shadow-inner ring-1 ring-gray-200 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {items.map((it) => {
+            const active = activeKey === it.key;
+            return (
+              <button
+                key={it.key}
+                type="button"
+                onClick={() => onChange(it.key)}
+                className={`shrink-0 snap-start rounded-full px-4 py-2 text-sm font-bold transition ${active
+                    ? "bg-gradient-to-r from-afmc-maroon to-afmc-maroon/80 text-white shadow-sm"
+                    : "text-gray-700 hover:bg-white hover:text-afmc-maroon"
+                  }`}
+                aria-current={active ? "page" : undefined}
+              >
+                <span className="whitespace-nowrap">{it.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MainTabsBar({ activeKey, onChange }) {
+  const items = [
+    { key: "drinks", label: "Drinks", Icon: Coffee },
+    { key: "snacks", label: "Snacks", Icon: Utensils },
+  ];
+
+  return (
+    <div className="w-full overflow-hidden rounded-[1.35rem] border border-white bg-white/80 p-1 shadow-[0_12px_35px_rgba(15,23,42,0.08)] ring-1 ring-gray-200/70">
+      <div className="grid grid-cols-2 gap-1">
+        {items.map(({ key, label, Icon }) => {
+          const active = activeKey === key;
           return (
             <button
-              key={it.key}
+              key={key}
               type="button"
-              onClick={() => onChange(it.key)}
-              className={`shrink-0 snap-start rounded-full px-4 py-2 text-sm font-bold ring-1 transition ${
-                active
-                  ? "bg-gradient-to-r from-afmc-maroon to-afmc-maroon/80 text-white ring-afmc-maroon/20 shadow-sm"
-                  : "bg-white text-gray-700 ring-gray-200 hover:ring-afmc-maroon/25 hover:text-afmc-maroon"
-              }`}
+              onClick={() => onChange(key)}
+              className={`relative flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-extrabold transition ${active
+                  ? "bg-gradient-to-r from-afmc-maroon to-[#8f1234] text-white shadow-lg shadow-afmc-maroon/20"
+                  : "text-gray-600 hover:bg-gray-50 hover:text-afmc-maroon"
+                }`}
               aria-current={active ? "page" : undefined}
             >
-              <span className="whitespace-nowrap">{it.label}</span>
+              <Icon className={`h-4 w-4 ${active ? "text-white" : "text-gray-500"}`} />
+              {label}
+              {active ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute bottom-0 left-1/2 h-1 w-12 -translate-x-1/2 rounded-full bg-afmc-gold"
+                />
+              ) : null}
             </button>
           );
         })}
@@ -828,256 +1080,24 @@ function ScrollTabs({ items, activeKey, onChange }) {
   );
 }
 
-function OffersScrollerPro({ offers, loading, onShare }) {
-  const [likedIds, setLikedIds] = useState(() => new Set());
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  const visibleOffers = useMemo(() => {
-    const list = Array.isArray(offers) ? offers : [];
-    const activeFirst = [...list].sort(
-      (a, b) => Number(isOfferActive(b?.status)) - Number(isOfferActive(a?.status))
-    );
-    return activeFirst.slice(0, 10);
-  }, [offers]);
-
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [visibleOffers.length]);
-
-  if (loading) {
-    return (
-      <div className="mb-8">
-        <div className="mb-4 flex items-end justify-between gap-4">
-          <div>
-            <div className="h-5 w-44 animate-pulse rounded bg-gray-200" />
-            <div className="mt-2 h-4 w-72 animate-pulse rounded bg-gray-100" />
-          </div>
-        </div>
-        <div className="flex gap-4 overflow-hidden">
-          {Array.from({ length: 3 }).map((_, idx) => (
-            <div
-              key={idx}
-              className="h-[140px] w-[320px] shrink-0 animate-pulse rounded-3xl border border-gray-200 bg-white"
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (!visibleOffers.length) {
-    return null;
-  }
-
+function SubTabsPills({ items, activeKey, onChange }) {
   return (
-    <div className="mb-8">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-extrabold tracking-tight text-gray-900">Offers for you</h2>
-            <span className="inline-flex items-center gap-1 rounded-full bg-afmc-maroon/5 px-2.5 py-1 text-[11px] font-semibold text-afmc-maroon ring-1 ring-afmc-maroon/10">
-              <Flame className="h-3.5 w-3.5" />
-              Today
-            </span>
-          </div>
-          <p className="mt-1 text-xs text-gray-600">Limited-time deals, updated frequently.</p>
-        </div>
-
-        <span className="rounded-full bg-gray-100 px-3 py-1 text-[11px] font-semibold text-gray-700 ring-1 ring-gray-200">
-          {visibleOffers.length} available
-        </span>
-      </div>
-
-      <div className="relative -mx-4 px-4">
-        <div
-          className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-3 pr-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          onScroll={(event) => {
-            const el = event.currentTarget;
-            const firstCard = el.querySelector("[data-offer-card='true']");
-            if (!firstCard) return;
-            const cardWidth = firstCard.getBoundingClientRect().width;
-            const nextIndex = Math.max(
-              0,
-              Math.min(visibleOffers.length - 1, Math.round(el.scrollLeft / (cardWidth + 16)))
-            );
-            setActiveIndex(nextIndex);
-          }}
-        >
-          {visibleOffers.map((offer) => {
-            const offerId = String(
-              offer?.offer_id ?? offer?.id ?? `${offer?.item_code ?? "x"}-${offer?.free_item_code ?? "y"}`
-            );
-            const active = isOfferActive(offer?.status);
-            const liked = likedIds.has(offerId);
-            const kind = active ? "hot" : "new";
-            const headline = formatOfferLine(offer);
-            const secondary = offer?.message
-              ? String(offer.message)
-              : "Add from the menu below to apply this deal.";
-
-            return (
-              <div
-                key={offerId}
-                data-offer-card="true"
-                className="group relative w-[320px] shrink-0 snap-start overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-              >
-                <div className="absolute inset-0 opacity-[0.2] transition group-hover:opacity-[0.3]">
-                  <svg viewBox="0 0 720 280" className="h-full w-full">
-                    <defs>
-                      <linearGradient id={`g2-${offerId}`} x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stopColor="#7a0b2e" />
-                        <stop offset="55%" stopColor="#caa84a" />
-                        <stop offset="100%" stopColor="#7a0b2e" />
-                      </linearGradient>
-                      <radialGradient id={`r2-${offerId}`} cx="30%" cy="30%" r="70%">
-                        <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9" />
-                        <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
-                      </radialGradient>
-                    </defs>
-                    <path
-                      d="M0,190 C130,120 240,250 380,180 C520,110 610,30 720,100 L720,280 L0,280 Z"
-                      fill={`url(#g2-${offerId})`}
-                    />
-                    <circle cx="120" cy="84" r="26" fill={`url(#g2-${offerId})`} opacity="0.55" />
-                    <circle cx="612" cy="80" r="34" fill={`url(#g2-${offerId})`} opacity="0.45" />
-                    <circle cx="320" cy="60" r="90" fill={`url(#r2-${offerId})`} opacity="0.35" />
-                  </svg>
-                </div>
-
-                <div className="relative p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="inline-flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 text-[11px] font-semibold text-gray-900 ring-1 ring-black/5">
-                          <span
-                            className={`inline-flex items-center gap-1.5 ${active ? "text-red-700" : "text-afmc-maroon"}`}
-                          >
-                            <OfferIcon kind={kind} />
-                            {active ? "Hot deal" : "Promo"}
-                          </span>
-                          <span className="text-gray-300">•</span>
-                          <span className="text-gray-700">
-                            {offer?.offer_date ? String(offer.offer_date).slice(0, 10) : "Today"}
-                          </span>
-                        </span>
-
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${
-                            active
-                              ? "bg-red-50 text-red-700 ring-red-200"
-                              : "bg-afmc-maroon/5 text-afmc-maroon ring-afmc-maroon/10"
-                          }`}
-                        >
-                          Limited
-                        </span>
-                      </div>
-
-                      <div className="mt-3 line-clamp-2 text-[15px] font-extrabold leading-snug tracking-tight text-gray-900">
-                        {headline}
-                      </div>
-
-                      <div className="mt-1 line-clamp-2 text-xs text-gray-700">{secondary}</div>
-
-                      <div className="mt-4 flex items-center gap-2">
-                        <div className="inline-flex items-center gap-2 rounded-2xl bg-white/80 px-3 py-2 text-xs font-semibold text-gray-800 ring-1 ring-black/5">
-                          <ShoppingCart className="h-4 w-4 text-afmc-maroon" />
-                          Add to cart from menu
-                        </div>
-                        <div className="hidden items-center gap-1 rounded-2xl bg-white/80 px-3 py-2 text-xs font-semibold text-gray-800 ring-1 ring-black/5 sm:inline-flex">
-                          <Zap className="h-4 w-4 text-afmc-maroon" />
-                          Instant apply
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex shrink-0 flex-col items-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setLikedIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(offerId)) next.delete(offerId);
-                            else next.add(offerId);
-                            return next;
-                          })
-                        }
-                        className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white/90 ring-1 ring-black/5 transition hover:bg-white ${
-                          liked ? "text-red-600" : "text-gray-800"
-                        }`}
-                        aria-label={liked ? "Unlike offer" : "Like offer"}
-                      >
-                        <Heart className={`h-5 w-5 ${liked ? "fill-current" : ""}`} />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onShare?.(offer)}
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white/90 text-gray-800 ring-1 ring-black/5 transition hover:bg-white"
-                        aria-label="Share offer"
-                      >
-                        <Share2 className="h-5 w-5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-3 flex items-center justify-center gap-1.5">
-          {visibleOffers.map((offer, idx) => {
-            const key = String(offer?.offer_id ?? offer?.id ?? idx);
-            const isActive = idx === activeIndex;
-            return (
-              <div
-                key={key}
-                className={`h-1.5 rounded-full transition-all ${isActive ? "w-6 bg-afmc-maroon" : "w-2 bg-gray-300"}`}
-              />
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SegmentedTabs({ items, activeKey, onChange }) {
-  const cols =
-    items.length === 1
-      ? "grid-cols-1"
-      : items.length === 2
-        ? "grid-cols-2"
-        : items.length === 3
-          ? "grid-cols-3"
-          : "grid-cols-4";
-
-  return (
-    <div className="w-full rounded-2xl border border-gray-200 bg-white shadow-sm">
-      <div className={`grid ${cols}`}>
-        {items.map((it, idx) => {
+    <div className="w-full">
+      <div className="inline-flex flex-wrap items-center gap-2 rounded-full bg-white/80 p-1.5 shadow-sm ring-1 ring-gray-200">
+        {items.map((it) => {
           const active = activeKey === it.key;
           return (
             <button
               key={it.key}
               type="button"
               onClick={() => onChange(it.key)}
-              className={`group relative min-w-0 overflow-hidden px-3 py-3 text-center text-sm font-bold transition sm:px-4 sm:py-4 ${
-                idx === 0 ? "rounded-l-2xl" : ""
-              } ${idx === items.length - 1 ? "rounded-r-2xl" : ""} ${
-                active
-                  ? "bg-gray-50 text-gray-900"
-                  : "bg-white text-gray-700 hover:bg-gray-50 hover:text-afmc-maroon"
-              }`}
+              className={`rounded-full px-5 py-2 text-sm font-extrabold transition ${active
+                  ? "bg-gray-950 text-white shadow-sm"
+                  : "bg-transparent text-gray-700 hover:bg-gray-50 hover:text-afmc-maroon"
+                }`}
               aria-current={active ? "page" : undefined}
             >
-              <span className="relative z-10 block truncate whitespace-nowrap">{it.label}</span>
-              <span
-                aria-hidden="true"
-                className={`pointer-events-none absolute left-6 right-6 bottom-2 h-[2px] rounded-full transition ${
-                  active ? "bg-afmc-maroon" : "bg-transparent group-hover:bg-afmc-maroon/30"
-                }`}
-              />
+              {it.label}
             </button>
           );
         })}
@@ -1109,10 +1129,12 @@ function EmptyState({ title = "No items found", subtitle = "Try changing filters
 }
 
 function FilterShell({ leftFilter, rightFilter, children }) {
+  const hasBoth = Boolean(leftFilter && rightFilter);
+
   return (
     <div className="space-y-6">
       {(leftFilter || rightFilter) && (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className={`grid gap-4 ${hasBoth ? "grid-cols-2" : "grid-cols-1"}`}>
           {leftFilter && <div>{leftFilter}</div>}
           {rightFilter && <div>{rightFilter}</div>}
         </div>
@@ -1122,6 +1144,8 @@ function FilterShell({ leftFilter, rightFilter, children }) {
   );
 }
 
+// Legacy filter retained for compatibility with older dashboard state.
+// eslint-disable-next-line no-unused-vars
 function SelectField({
   label,
   value,
@@ -1171,6 +1195,7 @@ function EnduserOtherSection({ onItemClick }) {
       setLoading(true);
       try {
         const result = await authFetchJson(`${API_BASE_URL}/menubar`);
+        // console.log("Fetched menu data:", result.data);
         setData(result?.data || []);
       } catch (fetchError) {
         setError(fetchError.message);
@@ -1207,6 +1232,7 @@ function EnduserOtherSection({ onItemClick }) {
         map.set(String(id), { value: String(id), label: name ? String(name) : String(id) });
       }
     });
+    // console.log("Computed category options:", Array.from(map.values()));
     return Array.from(map.values());
   }, [data]);
 
@@ -1304,7 +1330,7 @@ function EnduserMocktailSection({ onItemClick }) {
       ) : visibleItems.length === 0 ? (
         <EmptyState />
       ) : (
-        <ProgressiveMenuGrid items={visibleItems} onItemClick={onItemClick} />
+        <ProgressiveMenuGrid items={visibleItems} ignoreStockStatus onItemClick={onItemClick} />
       )}
     </FilterShell>
   );
@@ -1314,15 +1340,29 @@ function DrinkHardDrinkSection({ onItemClick }) {
   const [data, setData] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [category, setCategory] = useState("beer");
+  const [category, setCategory] = useState("all");
   const [selectedItem, setSelectedItem] = useState("");
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const result = await authFetchJson(`${API_BASE_URL}/Drinkhard${category}`);
-        setData(result?.data || []);
+        const categories = category === "all"
+          ? hardDrinkCategories.filter((item) => item.value !== "all")
+          : hardDrinkCategories.filter((item) => item.value === category);
+        const results = await Promise.all(
+          categories.map((item) => authFetchJson(`${API_BASE_URL}/Drinkhard${item.value}`))
+        );
+        const combinedItems = results.flatMap((result) => result?.data || []);
+        const uniqueItems = Array.from(
+          new Map(
+            combinedItems.map((item) => [
+              String(item.item_code ?? item.item_id ?? item.item_name),
+              item,
+            ])
+          ).values()
+        );
+        setData(uniqueItems);
       } catch (fetchError) {
         setError(fetchError.message);
       } finally {
@@ -1342,7 +1382,7 @@ function DrinkHardDrinkSection({ onItemClick }) {
   }, [data, selectedItem]);
 
   return (
-    <div className="space-y-6 rounded-2xl border border-white/60 bg-white/70 p-5 shadow-sm backdrop-blur-sm">
+    <div className="space-y-6 rounded-2xl border border-white/60 bg-white/70 p-5 shadow-sm backdrop-blur-sm mt-8">
       <InlineError message={error} />
       <div className="flex flex-wrap gap-3">
         {hardDrinkCategories.map((item) => (
@@ -1375,7 +1415,12 @@ function DrinkHardDrinkSection({ onItemClick }) {
       ) : visibleItems.length === 0 ? (
         <EmptyState />
       ) : (
-        <ProgressiveMenuGrid items={visibleItems} showStockStatus onItemClick={onItemClick} />
+        <ProgressiveMenuGrid
+          items={visibleItems}
+          showStockStatus
+          ignoreStockStatus={category === "cocktail" || category === "all"}
+          onItemClick={onItemClick}
+        />
       )}
     </div>
   );
@@ -1498,6 +1543,7 @@ function SnackNonVegSection({ onItemClick }) {
 }
 
 function MenuDashboard() {
+  const { user, setCartCount } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mainTab, setMainTab] = useState("drinks");
@@ -1510,15 +1556,158 @@ function MenuDashboard() {
   const [offers, setOffers] = useState([]);
   const [offersLoading, setOffersLoading] = useState(false);
 
-  const handleBuy = async (item, qty, remarks) => {
+  useEffect(() => {
+    // Prevent stale invoice/order pages from reappearing via browser Back after returning to menu.
     try {
+      const trap = sessionStorage.getItem("afmc:historyTrap:menudash");
+      if (trap === "1") {
+        sessionStorage.removeItem("afmc:historyTrap:menudash");
+        window.history.pushState({ afmcTrap: true }, "", window.location.href);
+      }
+    } catch (_) {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    // Refresh cart count when the menu dashboard mounts so badge state stays in sync.
+    const fetchCartCount = async () => {
+      if (!user?.userId || typeof setCartCount !== "function") return;
+      try {
+        const response = await cartAPI.getByUserId(user.userId);
+        const items = response?.data?.data || [];
+        setCartCount(getCartCount(items));
+      } catch (err) {
+        console.error("Error refreshing cart count on menu dashboard:", err);
+      }
+    };
+
+    fetchCartCount();
+  }, [user?.userId, setCartCount]);
+
+  useEffect(() => {
+    // If user presses browser Back immediately after landing on menu from invoice-like pages,
+    // keep them on menu instead of going back to the stale invoice route.
+    const onPopState = () => {
+      try {
+        const guard = sessionStorage.getItem("afmc:guardBack:menudash");
+        if (guard === "1") {
+          // stay on menu; add an entry back so the URL doesn't change.
+          window.history.pushState({ afmcGuard: true }, "", window.location.href);
+          sessionStorage.removeItem("afmc:guardBack:menudash");
+        }
+      } catch (_) {
+        // ignore
+      }
+    };
+
+    try {
+      window.addEventListener("popstate", onPopState);
+    } catch (_) {
+      // ignore
+    }
+
+    return () => {
+      try {
+        window.removeEventListener("popstate", onPopState);
+      } catch (_) {
+        // ignore
+      }
+    };
+  }, []);
+
+  const handleBuy = async (item, qty, remarks, selectedType) => {
+    try {
+      const typeForBackend = selectedType || null;
+      const pegMultiplier = String(typeForBackend || "").trim().toLowerCase() === "large" ? 2 : 1;
+      const desiredQty = Number(qty) || 1;
+      const itemCode = Number(item?.item_code ?? item?.item_id) || null;
+
+      try {
+        if (isCocktailOrMocktailItem(item) && Number.isFinite(itemCode) && itemCode > 0) {
+          const res = await barOrdersAPI.getCocktailDetailsById(itemCode);
+          const details = res?.data?.data?.details || [];
+          const ingredients = (details || [])
+            .map((d) => ({
+              itemCode: Number(d?.ITEM_CODE ?? d?.itemCode),
+              pegs: Number(d?.PEGS ?? d?.pegs ?? d?.QUANTITY ?? d?.quantity ?? 0) || 0,
+              itemName: String(d?.ITEM_NAME ?? d?.itemName ?? "").trim(),
+            }))
+            .filter((x) => Number.isFinite(x.itemCode) && x.itemCode > 0 && x.pegs > 0);
+
+          if (ingredients.length > 0) {
+            const codes = [...new Set(ingredients.map((ing) => ing.itemCode))];
+            const stockRes = await cartAPI.getIngredientStocks(codes, undefined, undefined, undefined, true);
+            const stockMap = stockRes?.data?.data || {};
+
+            for (const ing of ingredients) {
+              const rawAvailable = stockMap?.[String(ing.itemCode)];
+              if (rawAvailable === undefined || rawAvailable === null || rawAvailable === "") continue;
+              const available = Number(rawAvailable);
+              if (!Number.isFinite(available) || available < 0) continue;
+              const required = ing.pegs * desiredQty * pegMultiplier;
+              if (required > available) {
+                toast.error(`Out of stock for ingredient ${ing.itemName || ing.itemCode}. Available quantity: ${available}`);
+                return;
+              }
+            }
+          }
+        } else if (Number.isFinite(itemCode) && itemCode > 0) {
+          const stockRes = await cartAPI.getIngredientStocks([itemCode], undefined, undefined, undefined, true);
+          const stockMap = stockRes?.data?.data || {};
+          const rawAvailable = stockMap?.[String(itemCode)];
+          if (rawAvailable !== undefined && rawAvailable !== null && rawAvailable !== "") {
+            const available = Number(rawAvailable);
+            if (Number.isFinite(available) && available >= 0 && desiredQty * pegMultiplier > available) {
+              toast.error(getPegTypeOrderLimitMessage(item, available, `Out of stock. Available quantity: ${available}`, typeForBackend));
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        // ignore stock check failures here; do not hard-block buy flow on API issues
+      }
+
+      const menuSearchParams = new URLSearchParams(location.search);
+      const selectedPubmed = String(
+        location.state?.pubmed ||
+        menuSearchParams.get("pubmed") ||
+        location.state?.pubmedName ||
+        menuSearchParams.get("pubmedName") ||
+        sessionStorage.getItem("afmc:selectedPubmed") ||
+        ""
+      ).trim() || null;
+      const selectedPubmedName = String(
+        location.state?.pubmedName ||
+        menuSearchParams.get("pubmedName") ||
+        location.state?.pubmed ||
+        menuSearchParams.get("pubmed") ||
+        sessionStorage.getItem("afmc:selectedPubmedName") ||
+        ""
+      ).trim() || null;
+
+      if (selectedPubmed) {
+        sessionStorage.setItem("afmc:selectedPubmed", selectedPubmed);
+      }
+      if (selectedPubmedName) {
+        sessionStorage.setItem("afmc:selectedPubmedName", selectedPubmedName);
+      }
+
       const response = await Pubmenubuyservice.createOrder({
         itemCode: item?.item_code,
         itemId: item?.item_id,
         quantity: Number(qty) || 1,
         remarks,
         categoryId: item?.category_id,
-        type: item?.ac_unit || "Nos",
+        type: typeForBackend,
+        unitPrice: item?.unit_price,
+        profit: item?.profit,
+        prCharges: item?.pr_charges,
+        userId: item?.user_id,
+        subCategory: item?.sub_category,
+        barcode: item?.barcode,
+        pubmed: selectedPubmed,
+        ...(location.pathname.startsWith("/attendant") ? getSelectedAttendantCustomerPayload() : {}),
       });
 
       const orderNumber = response?.data?.data?.orderNumber;
@@ -1527,14 +1716,21 @@ function MenuDashboard() {
       }
 
       const baseSegment = location.pathname.startsWith("/user") ? "/user" : "/attendant";
+      if (baseSegment === "/attendant") {
+        clearSelectedAttendantCustomer();
+      }
       navigate(`${baseSegment}/menudash/buy?orderNumber=${orderNumber}`, {
         state: { orderNumber },
       });
       closePopup();
     } catch (error) {
-      window.alert(
-        error?.response?.data?.message || error?.message || "Unable to create order."
-      );
+      const msg = error?.response?.data?.message || error?.message || "Unable to create order.";
+      try {
+        toast.error(msg);
+      } catch {
+        // fallback to console if toast isn't available
+        console.error("Unable to display order error notification:", msg);
+      }
     }
   };
 
@@ -1545,22 +1741,28 @@ function MenuDashboard() {
       : "/user";
 
   const handleItemClick = async (item) => {
+    if (isOutOfStock(item) && !isCocktailOrMocktailItem(item)) {
+      return;
+    }
+
     if (!item?.item_code || !item?.item_id) {
       return;
     }
 
+    setPopupItem({
+      ...item,
+      description: item.description || "",
+      unit_price: item.unit_price || 0,
+      ac_unit: item.ac_unit || "Nos",
+      quantity: item.quantity || 0,
+    });
     setPopupOpen(true);
     setPopupLoading(true);
 
     try {
-      const response = await fetch(
+      const result = await authFetchJson(
         `${API_BASE_URL}/memupopup?itemCode=${item.item_code}&itemId=${item.item_id}`
       );
-      const result = await response.json();
-
-      if (!response.ok || !result?.success) {
-        throw new Error(result?.message || "Failed to fetch popup details");
-      }
 
       setPopupItem(result.data);
     } catch (error) {
@@ -1589,9 +1791,10 @@ function MenuDashboard() {
     const loadOffers = async () => {
       setOffersLoading(true);
       try {
-        const res = await offersAPI.getAllOffers();
+        const res = await offersAPI.getActiveOffers();
         const list = res?.data?.offers ?? res?.data?.data ?? res?.data ?? [];
         if (!alive) return;
+        // console.log("Fetched offers:", list);       
         setOffers(Array.isArray(list) ? list : []);
       } catch (error) {
         if (!alive) return;
@@ -1608,25 +1811,6 @@ function MenuDashboard() {
       alive = false;
     };
   }, []);
-
-  const handleShareOffer = async (offer) => {
-    const text = formatOfferLine(offer);
-
-    try {
-      if (navigator?.share) {
-        await navigator.share({ title: "AFMC Offer", text });
-        return;
-      }
-    } catch (error) {
-      console.error("Share error:", error);
-    }
-
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (error) {
-      console.error("Clipboard error:", error);
-    }
-  };
 
   const currentSectionKey = mainTab === "drinks" ? drinkSection : snackSection;
   const currentSection = useMemo(
@@ -1681,32 +1865,32 @@ function MenuDashboard() {
       <MenuHeader onBack={() => navigate(`${baseSegment}/dashboard`, { replace: true })} />
 
       {/* Main Content */}
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <OffersScrollerPro offers={offers} loading={offersLoading} onShare={handleShareOffer} />
+      <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+        <OffersMarquee offers={offers} loading={offersLoading} />
 
         {/* Tabs */}
         <div className="space-y-4">
-          <SegmentedTabs
-            items={Object.entries(menuConfig).map(([key, tab]) => ({ key, label: tab.label }))}
-            activeKey={mainTab}
-            onChange={handleMainTabChange}
-          />
+          <MainTabsBar activeKey={mainTab} onChange={handleMainTabChange} />
 
-          <SegmentedTabs
-            items={Object.entries(menuConfig[mainTab].sections).map(([key, section]) => ({ key, label: section.label }))}
-            activeKey={currentSectionKey}
-            onChange={(sectionKey) =>
-              mainTab === "drinks" ? handleDrinkSectionChange(sectionKey) : setSnackSection(sectionKey)
-            }
-          />
-
-          {currentSection.categories.length > 0 && (
-            <ScrollTabs
-              items={currentSection.categories.map((c) => ({ key: c.key, label: c.label }))}
-              activeKey={softDrinkCategory}
-              onChange={setSoftDrinkCategory}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <SubTabsPills
+              items={Object.entries(menuConfig[mainTab].sections).map(([key, section]) => ({ key, label: section.label }))}
+              activeKey={currentSectionKey}
+              onChange={(sectionKey) =>
+                mainTab === "drinks" ? handleDrinkSectionChange(sectionKey) : setSnackSection(sectionKey)
+              }
             />
-          )}
+
+            {currentSection.categories.length > 0 ? (
+              <div className="sm:max-w-[520px] sm:justify-end">
+                <ScrollTabs
+                  items={currentSection.categories.map((c) => ({ key: c.key, label: c.label }))}
+                  activeKey={softDrinkCategory}
+                  onChange={setSoftDrinkCategory}
+                />
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {/* Content Area */}
@@ -1729,4 +1913,3 @@ function MenuDashboard() {
 }
 
 export default MenuDashboard;
-

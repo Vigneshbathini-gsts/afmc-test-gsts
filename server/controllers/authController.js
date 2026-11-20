@@ -1,24 +1,17 @@
 const db = require("../config/db");
 const jwt = require("jsonwebtoken");
-const crypto = require("crypto");
 const { getRedirectPath } = require("../utils/roleRedirect");
 const nodemailer = require("nodemailer");
-const { generateResetToken, hashPassword ,comparePassword} = require("../helpers/authHelper");
+const {
+  generateResetToken,
+  hashResetToken,
+  hashPassword,
+  comparePassword,
+  validatePassword,
+} = require("../helpers/authHelper");
+const MessTimingsService = require("../services/MessTimingsService");
 
-// helper: MD5 hash
-const md5Hash = (text) => {
-  return crypto.createHash("md5").update(text).digest("hex").toUpperCase();
-};
-
-exports.createUser = async (req, res) => {
-  try {
-    // TODO
-  } catch (err) {
-    console.log("Error while creating user:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-};
-
+const MESS_TIMING_EXEMPT_ROLES = [10, 40];
 
 // ==========================================
 // GET USER ROLE BASED ON EMAIL / USERNAME
@@ -35,43 +28,26 @@ exports.getUserRole = async (req, res) => {
 
     const sql = `
       SELECT 
-        u.USER_ID,
-        u.USER_NAME,
-        u.EMAIL,
-        u.ROLE_ID,
-        r.ROLE_CODE,
-        r.ROLE_NAME
+        u.ROLE_ID
       FROM xxafmc_users u
-      JOIN xxafmc_role r 
-        ON u.ROLE_ID = r.ROLE_ID
-      WHERE u.EMAIL = ? OR u.USER_NAME = ?
+      WHERE (u.EMAIL = ? OR u.USER_NAME = ?)
+        AND u.ATTRIBUTE1 = 'A'
       LIMIT 1
     `;
 
     const [rows] = await db.execute(sql, [username, username]);
 
-    if (!rows || rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    const user = rows[0];
+    const roleId = Number(rows?.[0]?.ROLE_ID || 0);
 
     return res.status(200).json({
       success: true,
-      roleId: user.ROLE_ID,
-      roleCode: user.ROLE_CODE,
-      roleName: user.ROLE_NAME,
-      showOutletSelection: Number(user.ROLE_ID) === 40,
+      showOutletSelection: roleId === 40,
     });
   } catch (error) {
     console.error("Get User Role Error:", error);
     return res.status(500).json({
       success: false,
       message: "Server error while fetching role",
-      error: error.message,
     });
   }
 };
@@ -92,8 +68,6 @@ exports.loginUser = async (req, res) => {
       });
     }
 
-    const encryptedPwd = md5Hash(password);
-
     const sql = `
       SELECT 
         u.USER_ID,
@@ -102,18 +76,19 @@ exports.loginUser = async (req, res) => {
         u.PHONE_NUMBER,
         u.LOGIN_TYPE,
         u.ROLE_ID,
+        u.PASSWORD,
+        u.REQUIRED_PASSWORD_CHANGE,
+        u.ATTRIBUTE1,
         r.ROLE_CODE,
         r.ROLE_NAME
       FROM xxafmc_users u
       JOIN xxafmc_role r 
         ON u.ROLE_ID = r.ROLE_ID
       WHERE (u.EMAIL = ? OR u.USER_NAME = ?)
-        AND u.PASSWORD = ?
-        AND u.ATTRIBUTE1 = 'A'
       LIMIT 1
     `;
 
-    const [rows] = await db.execute(sql, [username, username, encryptedPwd]);
+    const [rows] = await db.execute(sql, [username, username]);
 
 
     if (!rows || rows.length === 0) {
@@ -124,6 +99,30 @@ exports.loginUser = async (req, res) => {
     }
 
     const user = rows[0];
+    const passwordCheck = await comparePassword(password, user.PASSWORD);
+    if (user.ATTRIBUTE1 !== "A" || !passwordCheck.valid) {
+      return res.status(401).json({ success: false, message: "Invalid username or password" });
+    }
+    const requiresPasswordChange =
+      passwordCheck.legacy || String(user.REQUIRED_PASSWORD_CHANGE || "").toUpperCase() === "Y";
+    if (passwordCheck.legacy) {
+      await db.execute(
+        "UPDATE xxafmc_users SET REQUIRED_PASSWORD_CHANGE = 'Y' WHERE USER_ID = ?",
+        [user.USER_ID]
+      );
+    }
+
+    if (
+      !requiresPasswordChange &&
+      !MESS_TIMING_EXEMPT_ROLES.includes(Number(user.ROLE_ID)) &&
+      !(await MessTimingsService.isMessOpen({ forceRefresh: true }))
+    ) {
+      return res.status(403).json({
+        success: false,
+        code: "MESS_CLOSED",
+        message: "Mess is currently closed.",
+      });
+    }
 
     // Always start a fresh session on login so previous in-session state
     // (e.g., scanned items) does not carry across logins / closed tabs.
@@ -132,6 +131,8 @@ exports.loginUser = async (req, res) => {
         req.session.regenerate((err) => (err ? reject(err) : resolve()));
       });
       req.session.loggedInAt = Date.now();
+      req.session.userId = user.USER_ID;
+      req.session.roleId = user.ROLE_ID;
     }
 
     // If role 40, outlet is mandatory
@@ -142,8 +143,11 @@ exports.loginUser = async (req, res) => {
       });
     }
 
-    const redirectPath = getRedirectPath(user.ROLE_ID, outletType, user.LOGIN_TYPE);
-    console.log("redirectPath",redirectPath);
+    const destinationPath = getRedirectPath(user.ROLE_ID, outletType, user.LOGIN_TYPE);
+    const redirectPath = requiresPasswordChange
+      ? "/force-password-change"
+      : destinationPath;
+    // console.log("redirectPath",redirectPath);
 
 
     const token = jwt.sign(
@@ -156,14 +160,21 @@ exports.loginUser = async (req, res) => {
         outletType: outletType || null,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: process.env.JWT_EXPIRES_IN || "8h" }
     );
+    res.clearCookie("afmc_access", {
+      httpOnly: true,
+      sameSite: process.env.COOKIE_SAME_SITE || (process.env.NODE_ENV === "production" ? "none" : "lax"),
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+    });
 
     return res.status(200).json({
       success: true,
       message: "Login successful",
       token,
       redirectPath,
+      destinationPath,
       user: {
         userId: user.USER_ID,
         username: user.USER_NAME,
@@ -175,13 +186,13 @@ exports.loginUser = async (req, res) => {
         roleName: user.ROLE_NAME,
         outletType: outletType || null,
       },
+      requiresPasswordChange,
     });
   } catch (error) {
-    console.error("Login Error:", error);
+    console.error("Login failed");
     return res.status(500).json({
       success: false,
       message: "Server error during login",
-      error: error.message,
     });
   }
 };
@@ -195,7 +206,7 @@ exports.loginUser = async (req, res) => {
 exports.forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
-    console.log("Forgot Password Request for:", email);
+    // console.log("Forgot Password Request for:", email);
 
     if (!email) {
       return res.status(400).json({ message: "Email is required" });
@@ -203,18 +214,18 @@ exports.forgotPassword = async (req, res) => {
 
     // Check user exists
     const [users] = await db.query(
-      "SELECT * FROM xxafmc_users WHERE EMAIL = ?",
+      "SELECT USER_ID, USER_NAME, EMAIL, FIRST_NAME FROM xxafmc_users WHERE EMAIL = ? AND ATTRIBUTE1 = 'A'",
       [email]
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(200).json({ success: true, message: "If the account exists, a reset link has been sent." });
     }
 
     const user = users[0];
 
     if (!user.EMAIL) {
-      return res.status(400).json({ message: "Email not available for this user" });
+      return res.status(200).json({ success: true, message: "If the account exists, a reset link has been sent." });
     }
 
     // Generate token and expiry
@@ -224,13 +235,12 @@ exports.forgotPassword = async (req, res) => {
     // Save token in DB
     await db.query(
       "UPDATE xxafmc_users SET RESET_TOKEN = ?, RESET_EXPIRY = ? WHERE USER_ID = ?",
-      [resetToken, expiryTime, user.USER_ID]
+      [hashResetToken(resetToken), expiryTime, user.USER_ID]
     );
 
-    // Include username in URL
-    const resetLink = `http://localhost:3000/reset-password/${resetToken}?username=${encodeURIComponent(
-      user.USER_NAME
-    )}`;
+    const frontendUrl = (process.env.FRONTEND_URL || "http://localhost:3000").replace(/\/+$/, "");
+
+    const resetLink = `${frontendUrl}/reset-password/${resetToken}`;
 
     // Mail config
     const transporter = nodemailer.createTransport({
@@ -258,10 +268,10 @@ exports.forgotPassword = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Password reset link sent to registered email",
+      message: "If the account exists, a reset link has been sent.",
     });
   } catch (err) {
-    console.log("Forgot Password Error:", err);
+    console.error("Forgot Password Error:");
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -271,7 +281,7 @@ exports.forgotPassword = async (req, res) => {
 // =========================
 exports.resetPassword = async (req, res) => {
   try {
-    const {username, token, password, confirmPassword } = req.body;
+    const { token, password, confirmPassword } = req.body;
     if (!token || !password || !confirmPassword) {
       return res.status(400).json({
         message: "Token, password and confirm password are required",
@@ -284,10 +294,15 @@ exports.resetPassword = async (req, res) => {
       });
     }
 
+    const passwordError = validatePassword(password, confirmPassword);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
+    }
+
     // Find user with valid token
    const [users] = await db.query(
-  "SELECT * FROM xxafmc_users WHERE RESET_TOKEN = ? AND USER_NAME = ? AND RESET_EXPIRY > NOW()",
-  [token, username]
+  "SELECT USER_ID, PASSWORD FROM xxafmc_users WHERE RESET_TOKEN = ? AND RESET_EXPIRY > NOW() AND ATTRIBUTE1 = 'A'",
+  [hashResetToken(token)]
 );
 
     if (users.length === 0) {
@@ -295,14 +310,20 @@ exports.resetPassword = async (req, res) => {
     }
 
     const user = users[0];
+    if ((await comparePassword(password, user.PASSWORD)).valid) {
+      return res.status(400).json({
+        success: false,
+        message: "New password cannot be the same as the current password",
+      });
+    }
 
-    // Hash new password (MD5)
-    const hashedPassword = hashPassword(password);
+    const hashedPassword = await hashPassword(password);
 
     // Update password and clear token
     await db.query(
       `UPDATE xxafmc_users
-       SET PASSWORD = ?, RESET_TOKEN = NULL, RESET_EXPIRY = NULL
+       SET PASSWORD = ?, RESET_TOKEN = NULL, RESET_EXPIRY = NULL,
+           REQUIRED_PASSWORD_CHANGE = 'N'
        WHERE USER_ID = ?`,
       [hashedPassword, user.USER_ID]
     );
@@ -312,7 +333,7 @@ exports.resetPassword = async (req, res) => {
       message: "Password reset successful",
     });
   } catch (err) {
-    console.log("Reset Password Error:", err);
+    console.error("Reset Password Error:");
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -324,10 +345,10 @@ exports.resetPassword = async (req, res) => {
 exports.changePassword = async (req, res) => {
   try {
     const { oldPassword, newPassword, confirmPassword } = req.body;
-    const username = req.user?.username || req.user?.user_name;
+    const userId = req.user?.userId;
 
     // Validation
-    if (!username || !oldPassword || !newPassword || !confirmPassword) {
+    if (!userId || !oldPassword || !newPassword || !confirmPassword) {
       return res.status(400).json({
         success: false,
         message: "All fields are required",
@@ -343,10 +364,10 @@ exports.changePassword = async (req, res) => {
 
     // Fetch user
     const [users] = await db.query(
-      `SELECT user_id, user_name, password
+      `SELECT user_id, password
        FROM xxafmc_users
-       WHERE UPPER(user_name) = UPPER(?)`,
-      [username]
+       WHERE user_id = ? AND ATTRIBUTE1 = 'A'`,
+      [userId]
     );
 
     if (users.length === 0) {
@@ -359,7 +380,8 @@ exports.changePassword = async (req, res) => {
     const user = users[0];
 
     // Compare old password
-    const isOldPasswordValid = comparePassword(oldPassword, user.password);
+    const oldPasswordCheck = await comparePassword(oldPassword, user.password);
+    const isOldPasswordValid = oldPasswordCheck.valid;
 
     if (!isOldPasswordValid) {
       return res.status(400).json({
@@ -368,8 +390,13 @@ exports.changePassword = async (req, res) => {
       });
     }
 
+    const passwordError = validatePassword(newPassword, confirmPassword);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
+    }
+
     // Prevent same password reuse
-    const isSamePassword = comparePassword(newPassword, user.password);
+    const isSamePassword = (await comparePassword(newPassword, user.password)).valid;
 
     if (isSamePassword) {
       return res.status(400).json({
@@ -379,12 +406,12 @@ exports.changePassword = async (req, res) => {
     }
 
     // MD5 hash new password
-    const hashedPassword = hashPassword(newPassword);
+    const hashedPassword = await hashPassword(newPassword);
 
     // Update password
    await db.query(
-  `UPDATE xxafmc_users 
-   SET password = ?
+  `UPDATE xxafmc_users
+  SET password = ?, REQUIRED_PASSWORD_CHANGE = 'N'
    WHERE user_id = ?`,
   [hashedPassword, user.user_id]
 );
@@ -400,6 +427,14 @@ exports.changePassword = async (req, res) => {
       message: "Internal server error",
     });
   }
+};
+
+exports.logout = (req, res) => {
+  res.clearCookie("afmc_access", { httpOnly: true, sameSite: process.env.COOKIE_SAME_SITE || (process.env.NODE_ENV === "production" ? "none" : "lax"), secure: process.env.NODE_ENV === "production", path: "/" });
+  if (req.session?.destroy) {
+    return req.session.destroy(() => res.status(200).json({ success: true, message: "Logged out" }));
+  }
+  return res.status(200).json({ success: true, message: "Logged out" });
 };
 
 

@@ -11,6 +11,7 @@ import {
   FaSortAmountUp,
   FaCalendarCheck,
 } from "react-icons/fa";
+import { toast } from "react-toastify";
 import { offersAPI } from "../../services/api";
 
 export default function OfferEdit() {
@@ -33,6 +34,7 @@ export default function OfferEdit() {
     freeItemQuantity: "",
     offerDate: "",
     endDate: "",
+    status: "Active",
     message: "",
   });
 
@@ -59,6 +61,7 @@ export default function OfferEdit() {
           freeItemQuantity: offer.free_item_quantity,
           offerDate: offer.offer_date ? offer.offer_date.split("T")[0] : "",
           endDate: offer.end_date ? offer.end_date.split("T")[0] : "",
+          status: offer.status?.toLowerCase() === "inactive" ? "Inactive" : "Active",
           message: toInitCap(offer.message) || "",
         });
       } catch (err) {
@@ -72,16 +75,6 @@ export default function OfferEdit() {
     fetchOfferDetails();
   }, [id]);
 
-  // Handle End Date Change
-  const handleEndDateChange = (e) => {
-    setFormData((prev) => ({
-      ...prev,
-      endDate: e.target.value,
-    }));
-    setError("");
-    setSuccessMessage("");
-  };
-
   const handleUpdate = async () => {
     try {
       setSaving(true);
@@ -90,14 +83,18 @@ export default function OfferEdit() {
 
       // Validate that end date is provided
       if (!formData.endDate) {
-        setError("Please select an end date");
+        const message = "Please select an end date";
+        setError(message);
+        toast.error(message);
         setSaving(false);
         return;
       }
 
       // Validate that end date is not before start date
       if (formData.offerDate && formData.endDate < formData.offerDate) {
-        setError("End date cannot be earlier than start date");
+        const message = "End date cannot be earlier than start date";
+        setError(message);
+        toast.error(message);
         setSaving(false);
         return;
       }
@@ -105,38 +102,46 @@ export default function OfferEdit() {
       // Pass the end date from formData to the API
       const res = await offersAPI.updateOffer(id, {
         endDate: formData.endDate,
+        status: formData.status,
       });
 
       // Check if status code is 200 (success)
       if (res.status === 200) {
-        setSuccessMessage(res.data?.message || "Offer deactivated successfully!");
-        
+        const message = res.data?.message || "Offer deactivated successfully!";
+        setSuccessMessage(message);
+        toast.success(message);
+
         setTimeout(() => {
           navigate("/admin/offers");
         }, 1500);
       } else {
-        setError("Unexpected response from server");
+        const message = "Unexpected response from server";
+        setError(message);
+        toast.error(message);
       }
     } catch (err) {
       console.error("Update Offer Error:", err);
       console.error("Error response:", err.response?.data);
       
       // Handle different error status codes
+      let message;
       if (err.response?.status === 400) {
-        setError(err.response?.data?.message || "Invalid data provided");
+        message = err.response?.data?.message || "Invalid data provided";
       } else if (err.response?.status === 404) {
-        setError("Offer not found");
+        message = "Offer not found";
       } else if (err.response?.status === 500) {
-        setError("Server error. Please try again later.");
+        message = "Server error. Please try again later.";
       } else {
-        setError(err.response?.data?.message || "Failed to deactivate offer");
+        message = err.response?.data?.message || "Failed to deactivate offer";
       }
+      setError(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleBack = () => navigate(-1);
+  const handleBack = () => navigate("/admin/offers");
   const handleDashboard = () => navigate("/admin/dashboard");
 
   if (loadingOffer) {
@@ -151,7 +156,7 @@ export default function OfferEdit() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-afmc-bg via-white to-afmc-bg2 relative p-4 md:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-afmc-bg via-white to-afmc-bg2 relative px-0 py-4 md:p-6">
       {/* Background Blobs */}
       <div className="absolute top-20 left-20 w-72 h-72 bg-afmc-maroon/10 rounded-full blur-3xl"></div>
       <div className="absolute bottom-20 right-20 w-80 h-80 bg-afmc-maroon2/10 rounded-full blur-3xl"></div>
@@ -182,10 +187,10 @@ export default function OfferEdit() {
 
             <button
               onClick={handleDashboard}
-              className="px-4 py-2 md:px-5 md:py-3 rounded-2xl bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-semibold shadow-sm transition flex items-center gap-2 text-sm md:text-base"
+              className="self-end sm:self-auto inline-flex items-center gap-2 px-4 py-2 md:px-5 md:py-3 rounded-full bg-white shadow hover:shadow-md border border-afmc-gold/30 text-gray-700 hover:text-afmc-maroon hover:bg-afmc-maroon/5 transition flex text-sm md:text-base"
             >
               <FaHome className="text-xs md:text-sm" />
-              Dashboard
+              Go To Dashboard
             </button>
           </div>
         </div>
@@ -300,24 +305,54 @@ export default function OfferEdit() {
             </h3>
 
             <div className="grid grid-cols-1 gap-6">
-              {/* End Date - Editable */}
+              {/* End Date */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                   End Date <span className="text-red-500">*</span>
                 </label>
-                <div className="flex items-center rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm focus-within:ring-2 focus-within:ring-afmc-maroon">
-                  <FaCalendarCheck className="text-gray-400 mr-3" />
+                <div className="relative">
+                  <FaCalendarCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
                     type="date"
-                    name="endDate"
                     value={formData.endDate}
-                    onChange={handleEndDateChange}
-                    className="w-full outline-none text-gray-700 bg-transparent"
+                    min={formData.offerDate || undefined}
+                    onChange={(event) =>
+                      setFormData((previous) => ({
+                        ...previous,
+                        endDate: event.target.value,
+                      }))
+                    }
+                    disabled={formData.status === "Inactive" || saving}
+                    className="w-full rounded-2xl border border-gray-200 bg-white pl-11 pr-4 py-3 shadow-sm outline-none focus:ring-2 focus:ring-afmc-maroon disabled:cursor-not-allowed disabled:bg-gray-100"
                   />
                 </div>
-                <p className="text-xs text-gray-400 mt-1">
-                  Set the end date for this offer. Status will be set to Inactive after this date.
-                </p>
+                {formData.status === "Inactive" && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Inactive offers cannot be edited.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Status <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={formData.status}
+                  onChange={(event) =>
+                    setFormData((previous) => ({ ...previous, status: event.target.value }))
+                  }
+                  disabled={formData.status === "Inactive" || saving}
+                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm outline-none focus:ring-2 focus:ring-afmc-maroon disabled:cursor-not-allowed disabled:bg-gray-100"
+                >
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
+                {formData.status === "Inactive" && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Inactive offers cannot be activated again.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -331,7 +366,7 @@ export default function OfferEdit() {
               className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl shadow-md transition flex items-center gap-2 disabled:opacity-50 text-sm"
             >
               <FaSave className="text-sm" />
-              {saving ? "Deactivating..." : "Deactivate Offer"}
+              {saving ? "Deactivating..." : "Save"}
             </button>
           </div>
         </div>

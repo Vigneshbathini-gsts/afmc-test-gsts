@@ -1,4 +1,5 @@
 const ConfirmOrderservices = require("../services/ConfirmOrderservices");
+const { emitOrderConfirmed } = require("../utils/orderEvents");
 
 exports.confirmOrder = async (req, res) => {
   try {
@@ -9,16 +10,24 @@ exports.confirmOrder = async (req, res) => {
       req.body || {}
     );
 
+    if (Number(data?.insertedCount || 0) > 0) {
+      emitOrderConfirmed({
+        orderNumber: data.orderNumber || ORDER_NUMBER,
+        kitchenTypes: Array.isArray(data.kitchenTypes) ? data.kitchenTypes : [],
+        createdAt: new Date().toISOString(),
+      });
+    }
+
     res.status(200).json({
       success: true,
       message: data.message,
       data,
     });
   } catch (error) {
-    console.error("Confirm order error:", error);
+    console.error("Failed to confirm order");
     res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Unable to confirm order",
+      message: "Unable to confirm order",
     });
   }
 };
@@ -34,10 +43,10 @@ exports.getConfirmedOrderDetails = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Fetch confirmed order error:", error);
+    console.error("Failed to fetch confirmed order");
     res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Unable to fetch confirmed order",
+      message: "Unable to fetch confirmed order",
     });
   }
 };
