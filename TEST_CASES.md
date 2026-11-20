@@ -259,7 +259,7 @@ Last updated: 2026-06-03
   4. Submit the form.
 - Expected result:
   - HTTP login request succeeds.
-  - `token` is saved to `localStorage`.
+  - The access token is set in an HttpOnly cookie and is not stored in `localStorage`.
   - `user` context is populated.
   - User is redirected to the correct dashboard based on role.
 - Notes:

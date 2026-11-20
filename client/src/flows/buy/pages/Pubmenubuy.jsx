@@ -1,16 +1,16 @@
-﻿﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { CheckCircle2, ChevronLeft, Minus, Pencil, Plus, Trash2, XCircle } from "lucide-react";
 import Pubmenubuyservice from "../services/Pubmenubuyservice";
 import ConfirmOrderservice from "../../../services/ConfirmOrderservice";
-import { getEffectiveAvailableQuantity, getMaxAllowedQuantity, getPegTypeOrderLimitMessage, isCocktailOrMocktail, isOutOfStock, validateNextQuantity } from "../../../utils/stockValidation";
+import { getEffectiveAvailableQuantity, getMaxAllowedQuantity, getPegTypeOrderLimitMessage, isCocktailOrMocktail, isOutOfStock } from "../../../utils/stockValidation";
 import { barOrdersAPI, cartAPI } from "../../../services/api";
 import { toInitCap } from "../../../utils/textFormat";
 import { getCartCount } from "../../../utils/cartCount";
 import { useAuth } from "../../../context/AuthContext";
 import { toast } from "react-toastify";
 
-const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCIMAGES/";
+const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST/";
 
 function getBuyflowOverrideDetails(orderNumber, itemCode) {
   const safeOrder = String(orderNumber || "").trim();
@@ -305,24 +305,6 @@ function normalizeItem(item, fallbackIndex = 0) {
   };
 }
 
-function fallbackItemFromState(source) {
-  if (!source) {
-    return [];
-  }
-
-  return [
-    {
-      id: source.item_id || source.item_code || "selected-item",
-      item_code: source.item_code || "",
-      item_name: source.item_name || "Item",
-      quantity: Number(source.quantity || 1),
-      subtotal: Number(source.unit_price || source.subtotal || 0),
-      image: source.image || "",
-      card_text: `Name: ${source.item_name || "Item"} Quantity: ${source.quantity || 1}`,
-    },
-  ];
-}
-
 function getStockCodeForNormalItem(item) {
   const code = Number(
     item?.itemId ??
@@ -499,7 +481,10 @@ export default function Pubmenubuy({
     ? "/attendant"
     : "/user";
 
-  const getStockLimitImageKey = (row) => String(Number(row?.orderLineId ?? row?.id) || row?.id || row?.item_code || "");
+  const getStockLimitImageKey = useCallback(
+    (row) => String(Number(row?.orderLineId ?? row?.id) || row?.id || row?.item_code || ""),
+    []
+  );
 
   const [stockLimitImageMessages, setStockLimitImageMessages] = useState({});
 
@@ -623,7 +608,6 @@ export default function Pubmenubuy({
 
           let issueMessage = "";
           let hasUnknownStock = false;
-          const multiplier = getItemPegMultiplier(entry.item);
           for (const ing of normalizedDetails) {
             const rawAvailable = normalAvailableByCode.get(String(ing.itemCode)) ?? stockMap?.[String(ing.itemCode)];
             if (rawAvailable === undefined || rawAvailable === null || rawAvailable === "") {
@@ -715,7 +699,6 @@ export default function Pubmenubuy({
 
       // Check standard items
       if (!isCocktailOrMocktail(item)) {
-        const multiplier = getItemPegMultiplier(item);
         if (item?.availableQuantity !== null && item?.availableQuantity !== undefined) {
           const effectiveAllowed = getEffectiveAvailableQuantity(item, Number(item.availableQuantity));
           if (Number(item.quantity || 0) > effectiveAllowed) {

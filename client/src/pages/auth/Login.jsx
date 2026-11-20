@@ -46,7 +46,7 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(false);
   const [touched, setTouched] = useState({ email: false, password: false });
   const [isCheckingRole, setIsCheckingRole] = useState(false);
-  const { user, isLoading, setUser } = useAuth();
+  const { isLoading, setUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const sessionAlertShownRef = useRef(false);
@@ -135,9 +135,12 @@ export default function Login() {
         outletType,
       });
       
-      console.log("Login response:", response.data.redirectPath);
-      
       if (response.data?.success) {
+        if (!response.data?.token) {
+          setError("Login failed because the server did not return an authentication token.");
+          return;
+        }
+
         // Handle remember me - store email and token
         if (rememberMe) {
           storeRememberedEmail(email.trim());
@@ -146,12 +149,15 @@ export default function Login() {
         }
 
         // Store token and user data in localStorage
-        storeAuthData(response.data.token, response.data.user, rememberMe);
+        storeAuthData(response.data.user, response.data.token, rememberMe);
 
         // Update auth context with user data
         setUser(response.data.user);
 
-        navigate(response.data.redirectPath, { replace: true });
+        navigate(response.data.redirectPath, {
+          replace: true,
+          state: { destinationPath: response.data.destinationPath },
+        });
         return;
       }
       setError(response.data?.message || "Login failed");

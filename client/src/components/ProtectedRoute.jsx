@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { getToken, clearAuthData } from "../utils/authStorage";
+import { clearAuthData } from "../utils/authStorage";
 
 function matchesAllowedRole(user, allowedRoles) {
   if (!allowedRoles?.length) return true;
@@ -38,13 +38,12 @@ export default function ProtectedRoute({
 }) {
   const { user, isLoading } = useAuth();
   const location = useLocation();
-  const token = getToken();
 
   if (isLoading) {
     return <div>Loading...</div>; // Or a proper loading component
   }
 
-  if (!token || !user) {
+  if (!user) {
     return (
       <ForceLogoutNavigate
         to="/login"

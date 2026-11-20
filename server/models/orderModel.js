@@ -1010,7 +1010,7 @@ async function saveNonMember({ firstName, lastName = "", phoneNumber }) {
   }
 }
 
-async function getUserOrderHistory({ fromDate, toDate, username, appUser }) {
+async function getUserOrderHistory({ fromDate, toDate, userId }) {
   const query = `
       SELECT  
         xxoh.order_num,
@@ -1050,7 +1050,6 @@ async function getUserOrderHistory({ fromDate, toDate, username, appUser }) {
       JOIN xxafmc_order_details xxod ON xxoh.order_num = xxod.order_id
       JOIN xxafmc_inventory xxui ON xxod.item_id = xxui.item_code
       JOIN xxafmc_kitchen_notification xxkn ON xxod.order_id = xxkn.ordernumber
-      JOIN xxafmc_users xu ON xxkn.user_name = xu.user_id
       LEFT JOIN xxafmc_invoices inv ON inv.order_num = xxoh.order_num
       LEFT JOIN (
         SELECT
@@ -1112,7 +1111,7 @@ async function getUserOrderHistory({ fromDate, toDate, username, appUser }) {
         GROUP BY od.order_id
       ) detail_totals
         ON detail_totals.order_id = xxoh.order_num
-      WHERE UPPER(xu.user_name) = UPPER(?)
+      WHERE xxoh.user_id = ?
         AND xxoh.order_num IN (
           SELECT ordernumber
           FROM xxafmc_kitchen_notification
@@ -1129,8 +1128,7 @@ async function getUserOrderHistory({ fromDate, toDate, username, appUser }) {
         MAX(xxod.creation_date) DESC
     `;
 
-  const cleanUser = appUser?.trim() || null;
-  const params = [cleanUser, fromDate || null, toDate || null];
+  const params = [userId, fromDate || null, toDate || null];
   const [rows] = await db.execute(query, params);
   return rows;
 }

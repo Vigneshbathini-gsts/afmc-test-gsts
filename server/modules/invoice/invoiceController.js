@@ -10,7 +10,8 @@ const createInvoice = async (req, res) => {
 
     return successResponse(res, "Invoice created", result);
   } catch (error) {
-    return errorResponse(res, error.message);
+    console.error("Failed to create invoice");
+    return errorResponse(res, "Unable to create invoice.");
   }
 };
 
@@ -28,7 +29,8 @@ const getInvoiceByOrder = async (req, res) => {
 
     return successResponse(res, "Invoice fetched", data);
   } catch (error) {
-    return errorResponse(res, error.message);
+    console.error("Failed to fetch invoice");
+    return errorResponse(res, "Unable to fetch invoice.");
   }
 };
 
@@ -50,7 +52,8 @@ module.exports = {
 
       return successResponse(res, "Payment saved", result);
     } catch (error) {
-      return errorResponse(res, error.message);
+      console.error("Failed to save invoice payment");
+      return errorResponse(res, "Unable to save invoice payment.");
     }
   },
 };

@@ -26,11 +26,10 @@ const getCocktails = async (req, res) => {
       data: rows,
     });
   } catch (error) {
-    console.error("Cocktail fetch error:", error);
+    console.error("Failed to fetch cocktail items");
     res.status(500).json({
       success: false,
       message: "Error fetching cocktail items",
-      error: error.message,
     });
   }
 };
@@ -60,11 +59,10 @@ const getCocktailById = async (req, res) => {
       data: row,
     });
   } catch (error) {
-    console.error("Cocktail item fetch error:", error);
+    console.error("Failed to fetch cocktail item");
     return res.status(500).json({
       success: false,
       message: "Error fetching cocktail item",
-      error: error.message,
     });
   }
 };
@@ -83,11 +81,10 @@ const getCocktailIngredients = async (req, res) => {
       data: rows,
     });
   } catch (error) {
-    console.error("Cocktail ingredient fetch error:", error);
+    console.error("Failed to fetch cocktail ingredients");
     return res.status(500).json({
       success: false,
       message: "Error fetching cocktail ingredients",
-      error: error.message,
     });
   }
 };
@@ -104,10 +101,10 @@ const getCocktailIngredientPrice = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Cocktail ingredient price error:", error);
+    console.error("Failed to calculate cocktail ingredient price");
     return res.status(400).json({
       success: false,
-      message: error.message || "Error calculating ingredient price",
+      message: "Error calculating ingredient price",
     });
   }
 };
@@ -125,10 +122,10 @@ const createCocktail = async (req, res) => {
       data: result,
     });
   } catch (error) {
-    console.error("Cocktail create error:", error);
+    console.error("Failed to create cocktail item");
     return res.status(400).json({
       success: false,
-      message: error.message || "Error creating cocktail item",
+      message: "Error creating cocktail item",
     });
   }
 };
@@ -155,12 +152,12 @@ const updateCocktail = async (req, res) => {
       data: result,
     });
   } catch (error) {
-    console.error("Cocktail update error:", error);
+    console.error("Failed to update cocktail item");
     const statusCode = error.message === "Cocktail item not found" ? 404 : 400;
 
     return res.status(statusCode).json({
       success: false,
-      message: error.message || "Error updating cocktail item",
+      message: statusCode === 404 ? "Cocktail item not found" : "Error updating cocktail item",
     });
   }
 };

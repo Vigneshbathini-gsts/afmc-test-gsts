@@ -17,8 +17,8 @@ const getOrderHistory = async (req, res) => {
 
     return successResponse(res, "Order history fetched", orders);
   } catch (error) {
-    console.error(error);
-    return errorResponse(res, error.message);
+    console.error("Failed to fetch order history");
+    return errorResponse(res, "Unable to fetch order history.");
   }
 };
 
@@ -30,33 +30,11 @@ const getOrderDetails = async (req, res) => {
 
     return successResponse(res, "Order details fetched", details);
   } catch (error) {
-    console.error(error);
-    return errorResponse(res, error.message);
+    console.error("Failed to fetch order details");
+    return errorResponse(res, "Unable to fetch order details.");
   }
 };
-const getOrderDetails = async (req, res) => {
-  try {
-    const { orderNumber } = req.params;
-
-    const data = await orderService.getOrderDetails(orderNumber);
-
-    res.status(200).json({
-      success: true,
-      data,
-    });
-  } catch (error) {
-    console.error("Get Order Details Error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch order details",
-    });
-  }
-};
-
 module.exports = {
   getOrderHistory,
   getOrderDetails,
-  getOrderDetails,
-
 };

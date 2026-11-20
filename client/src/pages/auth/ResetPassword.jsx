@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { FaUser, FaLock, FaEye, FaEyeSlash, FaKey } from "react-icons/fa";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { authAPI } from "../../services/api";
+import { getPasswordPolicyError } from "../../utils/passwordPolicy";
 
 const ResetPassword = () => {
   const { token } = useParams();
@@ -48,8 +49,9 @@ const ResetPassword = () => {
       return;
     }
 
-    if (newPassword !== confirmPassword) {
-      setError("New password and confirm password do not match");
+    const passwordError = getPasswordPolicyError(newPassword, confirmPassword);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
 
@@ -98,8 +100,8 @@ const ResetPassword = () => {
             </h2>
 
             <p className="text-gray-600 text-lg leading-relaxed max-w-lg">
-              Update your AFMC account password securely and regain access to your
-              portal with confidence.
+            Use at least 12 characters. Passwords must not be a common weak choice
+            and cannot exceed bcrypt's 72-byte input limit.
             </p>
           </div>
         </div>
@@ -167,6 +169,9 @@ const ResetPassword = () => {
                     name="newPassword"
                     value={formData.newPassword}
                     onChange={handleChange}
+                    minLength={12}
+                    maxLength={72}
+                    autoComplete="new-password"
                     placeholder="Enter new password"
                     className="w-full bg-transparent outline-none text-gray-800"
                   />
@@ -191,6 +196,9 @@ const ResetPassword = () => {
                     name="confirmPassword"
                     value={formData.confirmPassword}
                     onChange={handleChange}
+                    minLength={12}
+                    maxLength={72}
+                    autoComplete="new-password"
                     placeholder="Confirm new password"
                     className="w-full bg-transparent outline-none text-gray-800"
                   />

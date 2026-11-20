@@ -1,10 +1,9 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { cartAPI } from "../services/api";
-import { storeAuthData, clearAuthData, getStoredUser } from "../utils/authStorage";
+import { clearAuthData, getStoredUser, getToken } from "../utils/authStorage";
 import { getCartCount } from "../utils/cartCount";
 
 const AuthContext = createContext(null);
-const AUTH_USER_STORAGE_KEY = "authUser";
 const ORDER_HISTORY_FILTER_PREFIX = "orderHistoryFilters";
 
 const clearOrderHistoryFilters = () => {
@@ -75,8 +74,10 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const storedUser = getStoredUser();
+    const token = getToken();
 
-    if (!storedUser) {
+    if (!storedUser || !token) {
+      clearAuthData();
       setUser(null);
       setIsLoading(false);
       return;
@@ -116,7 +117,6 @@ export function AuthProvider({ children }) {
       outletType: userData.outletType || null,
     };
 
-    storeAuthData(null, normalizedUser);
     setUser(normalizedUser);
     setIsLoading(false);
   };

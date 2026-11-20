@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { orderAPI } from "../../services/api";
 import orderService from "../../services/orderService";
 import { exportTableToPdf } from "../../utils/pdfExport";
-import OrderFilters from "../../components/OrderFilters";
 import OrderTable from "../../components/OrderTable";
 import OrderDetailsModal from "../../components/OrderDetailsModal";
 import { toInitCap } from "../../utils/textFormat";
@@ -74,7 +73,7 @@ const OrderHistoryPage = () => {
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
 
-    const fetchOrders = async () => {
+    const fetchOrders = useCallback(async () => {
         try {
             setLoading(true);
             setError("");
@@ -95,7 +94,7 @@ const OrderHistoryPage = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [appUser, filters]);
 
     const handleViewDetails = (orderNumber) => {
         setSelectedOrderNumber(orderNumber);
@@ -109,7 +108,7 @@ const OrderHistoryPage = () => {
 
     useEffect(() => {
         fetchOrders();
-    }, [appUser]);
+    }, [fetchOrders]);
 
     useEffect(() => {
         sessionStorage.setItem(filterStorageKey, JSON.stringify(filters));
@@ -149,9 +148,6 @@ const OrderHistoryPage = () => {
     const totalPages = Math.max(1, Math.ceil(visibleOrders.length / pageSize));
     const pageStartIndex = (page - 1) * pageSize;
     const paginatedOrders = visibleOrders.slice(pageStartIndex, pageStartIndex + pageSize);
-    const showingFrom = visibleOrders.length === 0 ? 0 : pageStartIndex + 1;
-    const showingTo = Math.min(pageStartIndex + pageSize, visibleOrders.length);
-
     useEffect(() => {
         setPage(1);
     }, [filters.orderNumber, orders, pageSize]);

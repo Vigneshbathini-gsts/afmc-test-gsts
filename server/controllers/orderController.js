@@ -27,11 +27,10 @@ exports.fetchActiveOrders = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to fetch active orders:", error);
+    console.error("Failed to fetch active orders");
     res.status(500).json({
       success: false,
       message: "Unable to fetch active orders.",
-      error: error.message,
     });
   }
 };
@@ -53,11 +52,10 @@ exports.fetchAttendantOrders = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to fetch attendant active orders:", error);
+    console.error("Failed to fetch attendant active orders");
     res.status(500).json({
       success: false,
       message: "Unable to fetch attendant active orders.",
-      error: error.message,
     });
   }
 };
@@ -80,11 +78,10 @@ exports.fetchAdminOrderHistory = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to fetch admin order history:", error);
+    console.error("Failed to fetch admin order history");
     res.status(500).json({
       success: false,
       message: "Unable to fetch order history.",
-      error: error.message,
     });
   }
 };
@@ -114,11 +111,10 @@ exports.fetchOrderWiseReport = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to fetch order-wise report:", error);
+    console.error("Failed to fetch order-wise report");
     res.status(500).json({
       success: false,
       message: "Unable to fetch order-wise report.",
-      error: error.message,
     });
   }
 };
@@ -132,11 +128,10 @@ exports.fetchOrderHistoryUsers = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to fetch order history users:", error);
+    console.error("Failed to fetch order history users");
     res.status(500).json({
       success: false,
       message: "Unable to fetch order history users.",
-      error: error.message,
     });
   }
 };
@@ -166,11 +161,10 @@ exports.fetchItemWiseReport = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to fetch item-wise report:", error);
+    console.error("Failed to fetch item-wise report");
     res.status(500).json({
       success: false,
       message: "Unable to fetch item-wise report.",
-      error: error.message,
     });
   }
 };
@@ -186,11 +180,10 @@ exports.fetchOrderDetails = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to fetch order details:", error);
+    console.error("Failed to fetch order details");
     res.status(500).json({
       success: false,
       message: "Unable to fetch order details.",
-      error: error.message,
     });
   }
 };
@@ -212,11 +205,10 @@ exports.fetchOrderSummary = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to fetch order summary:", error);
+    console.error("Failed to fetch order summary");
     res.status(500).json({
       success: false,
       message: "Unable to fetch order summary.",
-      error: error.message,
     });
   }
 };
@@ -240,11 +232,10 @@ exports.lookupNonMember = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to lookup non-member:", error);
+    console.error("Failed to lookup non-member");
     res.status(500).json({
       success: false,
       message: "Unable to lookup non-member.",
-      error: error.message,
     });
   }
 };
@@ -263,7 +254,7 @@ exports.createOrUpdateNonMember = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to save non-member:", error);
+    console.error("Failed to save non-member");
 
     if (error.code === "INVALID_DATA") {
       return res.status(400).json({
@@ -275,7 +266,6 @@ exports.createOrUpdateNonMember = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Unable to save non-member.",
-      error: error.message,
     });
   }
 };
@@ -283,12 +273,11 @@ exports.createOrUpdateNonMember = async (req, res) => {
 exports.fetchUserOrderHistory = async (req, res) => {
   try {
     const { from = null, to = null } = req.query;
-    const appUser = req.user?.username || null;
 
     const data = await getUserOrderHistory({
       fromDate: from,
       toDate: to,
-      appUser,
+      userId: req.user?.userId,
     }); 
 // console.log("Fetched User Order History:", data);
     res.status(200).json({
@@ -296,11 +285,10 @@ exports.fetchUserOrderHistory = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Failed to fetch user order history:", error);
+    console.error("Failed to fetch user order history");
     res.status(500).json({
       success: false,
       message: "Unable to fetch order history.",
-      error: error.message,
     });
   }
 };

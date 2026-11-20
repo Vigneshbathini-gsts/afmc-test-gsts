@@ -8,6 +8,7 @@ import Home from "../pages/common/Home";
 import NotFound from "../pages/common/NotFound";
 import Login from "../pages/auth/Login";
 import ChangePassword from "../pages/auth/ChangePassword";
+import ForcePasswordChange from "../pages/auth/ForcePasswordChange";
 import Unauthorized from "../pages/auth/Unauthorized";
 import ForgotPassword from "../pages/auth/ForgotPassword";
 import ResetPassword from "../pages/auth/ResetPassword";
@@ -112,6 +113,7 @@ export default function AppRoutes() {
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<Login />} />
       <Route path="/change-password" element={<ChangePassword />} />
+      <Route path="/force-password-change" element={<ForcePasswordChange />} />
       <Route path="/unauthorized" element={<Unauthorized />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password/:token" element={<ResetPassword />} />

@@ -267,7 +267,7 @@ exports.getCustomItemDetails = async (req, res) => {
     const customDetails = await getCustomItemDetails(req, itemId);
     return res.status(200).json({ success: true, data: customDetails });
   } catch (error) {
-    console.error("Error fetching custom item details:", error);
+    console.error("Failed to fetch custom item details");
     return res.status(500).json({ success: false, message: "Failed to load custom item details" });
   }
 };
@@ -294,7 +294,7 @@ exports.saveCustomItemDetails = async (req, res) => {
 
     return res.status(200).json({ success: true, data: req.session[sessionKey] });
   } catch (error) {
-    console.error("Error saving custom item details:", error);
+    console.error("Failed to save custom item details");
     return res.status(500).json({ success: false, message: "Failed to save custom item details" });
   }
 };
@@ -314,7 +314,7 @@ exports.clearCustomItemDetails = async (req, res) => {
 
     return res.status(200).json({ success: true });
   } catch (error) {
-    console.error("Error clearing custom item details:", error);
+    console.error("Failed to clear custom item details");
     return res.status(500).json({ success: false, message: "Failed to clear custom item details" });
   }
 };
@@ -360,9 +360,9 @@ exports.addCartItem = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error adding item to cart:", error);
+    console.error("Failed to add item to cart");
     const status = error?.status || (error?.message?.includes("Out of stock") ? 400 : 500);
-    const message = error?.message || "Failed to add item to cart";
+    const message = status === 400 ? "Item is invalid or unavailable." : "Failed to add item to cart";
     return res.status(status).json({ success: false, message });
   }
 };
@@ -387,9 +387,9 @@ exports.getCocktailDetails = async (req, res) => {
 
     return res.status(200).json({ success: true, data: collection });
   } catch (error) {
-    console.error("Error fetching cocktail details:", error);
+    console.error("Failed to fetch cocktail details");
     const status = error.status || 500;
-    return res.status(status).json({ success: false, message: error.message || "Failed to fetch cocktail details" });
+    return res.status(status).json({ success: false, message: status === 404 ? "Cart item not found" : "Failed to fetch cocktail details" });
   }
 };
 
@@ -413,9 +413,9 @@ exports.updateCocktailIngredients = async (req, res) => {
 
     return res.status(200).json({ success: true, data: updatedCollection });
   } catch (error) {
-    console.error("Error updating cocktail ingredients:", error);
+    console.error("Failed to update cocktail ingredients");
     const status = error.status || 500;
-    return res.status(status).json({ success: false, message: error.message || "Failed to update cocktail ingredients" });
+    return res.status(status).json({ success: false, message: status === 400 ? "Invalid cocktail ingredients." : "Failed to update cocktail ingredients" });
   }
 };
 
@@ -957,9 +957,7 @@ exports.confirmOrder = async (req, res) => {
       const parentLine = paidLineByKey.get(parentKey);
 
       if (!parentLine) {
-        console.error(
-          `Skipping free/BOGO cart row for order ${orderNumber}: no matching paid line found for parent key ${parentKey} (item_id ${fields.itemId})`
-        );
+        console.error("Skipped free cart row without a matching paid item");
         continue;
       }
 
@@ -1036,7 +1034,7 @@ exports.confirmOrder = async (req, res) => {
       const computedTotal = Number(totalRows[0]?.computed_total || 0);
       await connection.execute(`UPDATE xxafmc_order_header SET order_total = ? WHERE order_num = ?`, [computedTotal, orderNumber]);
     } catch (e) {
-      console.error('Failed to recompute order_total for order', orderNumber, e);
+      console.error("Failed to recompute order total");
     }
 
     await connection.commit();
@@ -1048,16 +1046,18 @@ exports.confirmOrder = async (req, res) => {
       data: { orderNumber },
     });
   } catch (error) {
-    console.error("Error confirming order:", error);
+    console.error("Failed to confirm order");
     await connection.rollback();
-    const message = error?.message || "Failed to confirm order";
     const status =
       error?.statusCode ||
       error?.status ||
-      (message.toLowerCase().includes("insufficient stock") || message.toLowerCase().includes("out of stock")
+      (error?.message?.toLowerCase().includes("insufficient stock") || error?.message?.toLowerCase().includes("out of stock")
         ? 400
         : 500);
-    return res.status(status).json({ success: false, message });
+    return res.status(status).json({
+      success: false,
+      message: status === 400 ? "One or more items are unavailable." : "Failed to confirm order",
+    });
   } finally {
     connection.release();
   }
@@ -1097,12 +1097,11 @@ exports.updateCartItemQuantity = async (req, res) => {
     const items = await cartModel.getCartItemsByUser(userId);
     return res.status(200).json({ success: true, message: "Quantity updated", data: items });
   } catch (error) {
-    console.error("Error updating cart item quantity:", error);
+    console.error("Failed to update cart item quantity");
     const status = error?.status || (error?.message?.includes("Out of stock") ? 400 : 500);
-    const message = error?.message || "Failed to update cart quantity";
     return res.status(status).json({
       success: false,
-      message,
+      message: status === 400 ? "Invalid quantity or insufficient stock." : "Failed to update cart quantity",
     });
   }
 };
@@ -1133,7 +1132,7 @@ exports.deleteCartItem = async (req, res) => {
     const items = await cartModel.getCartItemsByUser(userId);
     return res.status(200).json({ success: true, message: "Cart item removed", data: items });
   } catch (error) {
-    console.error("Error deleting cart item:", error);
+    console.error("Failed to delete cart item");
     return res.status(500).json({ success: false, message: "Failed to remove cart item" });
   }
 };
@@ -1160,11 +1159,10 @@ exports.getLovIngredients = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Controller Error:", error);
+    console.error("Failed to fetch cart ingredients");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch items",
-      error: error.message,
     });
   }
 };
@@ -1211,7 +1209,7 @@ exports.getIngredientStocks = async (req, res) => {
     );
     return res.status(200).json({ success: true, data });
   } catch (error) {
-    console.error("Error fetching ingredient stocks:", error);
+    console.error("Failed to fetch ingredient stocks");
     return res.status(500).json({ success: false, message: "Failed to fetch ingredient stocks" });
   }
 };

@@ -1,6 +1,4 @@
 // utils/asyncHandler.js
-const db = require("../config/db");
-
 const NETWORK_ERROR_CODES = new Set([
   "ECONNRESET",
   "ECONNREFUSED",
@@ -68,11 +66,12 @@ const asyncHandler = (fn) => {
 
     const cleanupConnection = async () => {
       if (!res.headersSent && currentConnection && currentConnection.threadId) {
-        console.log(`Client left! Automatically killing MySQL Thread ID: ${currentConnection.threadId}`);
+        console.log("Client disconnected; terminating database operation");
         try {
+          const db = require("../config/db");
           await db.query(`KILL ${currentConnection.threadId}`);
         } catch (killError) {
-          console.error("Failed to kill thread:", killError.message);
+          console.error("Failed to terminate database operation");
         }
       }
     };

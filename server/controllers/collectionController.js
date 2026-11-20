@@ -30,11 +30,10 @@ exports.getCollectionByOrder = async (req, res) => {
       data: rows,
     });
   } catch (error) {
-    console.error("Error fetching collection:", error);
+    console.error("Failed to fetch collection");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch collection",
-      error: error.message,
     });
   }
 };
@@ -88,11 +87,10 @@ exports.addToCollection = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error adding to collection:", error);
+    console.error("Failed to add to collection");
     return res.status(500).json({
       success: false,
       message: "Failed to add to collection",
-      error: error.message,
     });
   }
 };
@@ -134,11 +132,10 @@ exports.updateCollectionItem = async (req, res) => {
       message: "Item updated successfully",
     });
   } catch (error) {
-    console.error("Error updating collection item:", error);
+    console.error("Failed to update collection item");
     return res.status(500).json({
       success: false,
       message: "Failed to update collection item",
-      error: error.message,
     });
   }
 };
@@ -178,11 +175,10 @@ exports.deleteFromCollection = async (req, res) => {
       message: "Item deleted from collection",
     });
   } catch (error) {
-    console.error("Error deleting from collection:", error);
+    console.error("Failed to delete collection item");
     return res.status(500).json({
       success: false,
       message: "Failed to delete from collection",
-      error: error.message,
     });
   }
 };
@@ -215,11 +211,10 @@ exports.clearCollection = async (req, res) => {
       message: `Cleared ${result.affectedRows} items from collection`,
     });
   } catch (error) {
-    console.error("Error clearing collection:", error);
+    console.error("Failed to clear collection");
     return res.status(500).json({
       success: false,
       message: "Failed to clear collection",
-      error: error.message,
     });
   }
 };
@@ -256,11 +251,10 @@ exports.getScannedQuantityByItem = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error fetching scanned quantity:", error);
+    console.error("Failed to fetch scanned quantity");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch scanned quantity",
-      error: error.message,
     });
   }
 };
@@ -317,11 +311,10 @@ exports.getCollectionSummary = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error fetching collection summary:", error);
+    console.error("Failed to fetch collection summary");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch collection summary",
-      error: error.message,
     });
   }
 };

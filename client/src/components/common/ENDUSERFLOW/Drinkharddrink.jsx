@@ -7,7 +7,7 @@ function Drinkharddrink() {
   const [category, setCategory] = useState("beer"); // default
   const [selectedItem, setSelectedItem] = useState("");
 
-  const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCIMAGES/";
+  const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST/";
 
   // 🔥 Dynamic API call
   const fetchdata = async (type) => {

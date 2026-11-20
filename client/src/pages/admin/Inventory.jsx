@@ -9,7 +9,7 @@ import { FiCheckCircle, FiX } from "react-icons/fi";
 
 
 const INVENTORY_PAGE_SIZE = 20;
-const INVENTORY_IMAGE_BASE_URL = "https://afmc.globalsparkteksolutions.com/AFMCIMAGES/";
+const INVENTORY_IMAGE_BASE_URL = "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST/";
 
 const JPG_IMAGE_ERROR = "Only JPG image files are allowed.";
 const isJpgImageFile = (file) => {

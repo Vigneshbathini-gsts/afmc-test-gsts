@@ -61,7 +61,7 @@ or:
 npm start
 ```
 
-The backend default port in code is `5000`, but the frontend default API helper expects `7300` for local development. Align these by setting `PORT=7300` in the server environment or by setting `REACT_APP_API_URL` in the client.
+The backend default port in code is `5000`, but this TEST deployment uses port `8456` and the `AFMCMESSTEST` base path. Align local settings by setting `PORT=8456` and `BASE_PATH=AFMCMESSTEST` in the server environment or by setting `REACT_APP_API_URL` in the client.
 
 ### Frontend
 
@@ -77,17 +77,17 @@ The React app starts on port `3000`.
 ### Common Local URLs
 
 - Frontend: `http://localhost:3000`
-- Backend health/root: `http://localhost:7300/AFMCMESS`
-- API base: `http://localhost:7300/AFMCMESS/api`
+- Backend health/root: `http://localhost:8456/AFMCMESSTEST`
+- API base: `http://localhost:8456/AFMCMESSTEST/api`
 
 ## 4. Environment Variables
 
 Backend variables used by `server/`:
 
 ```env
-PORT=7300
+PORT=8456
 NODE_ENV=development
-BASE_PATH=AFMCMESS
+BASE_PATH=AFMCMESSTEST
 
 DB_HOST=localhost
 DB_PORT=3306
@@ -96,18 +96,20 @@ DB_PASSWORD=your_password
 DB_NAME=afmc_mess
 
 JWT_SECRET=replace_with_secure_secret
+JWT_EXPIRES_IN=8h # Backend JWT lifetime (e.g. 8h or 1d)
 SESSION_SECRET=replace_with_secure_session_secret
 SESSION_COOKIE_NAME=afmc.sid
 SESSION_TABLE_NAME=sessions
 
 CORS_ORIGIN=http://localhost:3000
 FRONTEND_URL=http://localhost:3000
+# In production, set CORS_ORIGIN to the exact trusted frontend origin(s).
 
 EMAIL_USER=your_email
 EMAIL_PASS=your_email_app_password
 
-AFMC_IMAGE_UPLOAD_PATH=/var/www/AFMCIMAGES
-AFMC_IMAGE_PUBLIC_BASE_URL=/AFMCMESS/uploads
+AFMC_IMAGE_UPLOAD_PATH=/var/www/AFMCMESSTEST
+AFMC_IMAGE_PUBLIC_BASE_URL=https://afmc.globalsparkteksolutions.com/AFMCMESSTEST
 
 DEBUG_OFFERS=0
 DEBUG_COCKTAIL_STOCK=0
@@ -117,7 +119,7 @@ DEDUCT_STOCK_ON_CONFIRM=0
 Frontend variable:
 
 ```env
-REACT_APP_API_URL=http://localhost:7300/AFMCMESS/api
+REACT_APP_API_URL=http://localhost:8456/AFMCMESSTEST/api
 ```
 
 If `REACT_APP_API_URL` is not set, `client/src/services/api.js` computes a default API URL based on the browser hostname.
@@ -140,7 +142,7 @@ Important files:
 
 The frontend stores:
 
-- `token` in `localStorage`
+- the access token in an HttpOnly cookie; JavaScript cannot read it
 - normalized user object as `authUser` in `localStorage`
 - some order-history filters in `sessionStorage`
 
@@ -148,7 +150,7 @@ The frontend stores:
 
 Important files:
 
-- `server/server.js`: Express app setup, CORS, session store, static uploads, route mounting, error handler.
+- `server/server.js`: Express app setup, CORS, session store, catalog image serving, route mounting, error handler.
 - `server/config/db.js`: MySQL connection pool and startup connection test.
 - `server/middleware/authMiddleware.js`: JWT verification middleware.
 - `server/routes/`: Route definitions.
@@ -162,7 +164,7 @@ Important files:
 The backend mounts each API twice:
 
 - `/api/...`
-- `/AFMCMESS/api/...` when `BASE_PATH=AFMCMESS`
+- `/AFMCMESSTEST/api/...` when `BASE_PATH=AFMCMESSTEST`
 
 This supports both local direct API calls and deployed reverse-proxy calls.
 
@@ -344,7 +346,7 @@ Detailed guide: `docs/buy-flow.md`.
 
 1. Admin/storekeeper manages inventory under `/admin/inventory` or `/storekeeper/inventory`.
 2. Inventory APIs provide categories, subcategories, bar types, item lookup, barcode checks, stock reports, stock add, and stock out.
-3. File uploads use the backend upload middleware and are served through `/uploads` and `/AFMCMESS/uploads`.
+3. Product images use the backend upload middleware and are served through an allowlisted catalog-image handler at `/uploads/<filename>` or `/AFMCMESSTEST/<filename>`; the upload directory is not exposed as static content.
 4. Stock reservation support exists through `xxafmc_stock_reservation_totals`.
 
 ### Reporting Flow
@@ -366,6 +368,9 @@ Important checked-in SQL:
 - `database/migrations/2026-04-14_order_scan_collection_extra_data_longtext.sql`: migration for scan collection extra data.
 - `database/migrations/2026-05-11_cart_customization.sql`: creates `xxafmc_cart_customization`.
 - `database/migrations/2026-05-26_stock_reservation_totals.sql`: creates `xxafmc_stock_reservation_totals`.
+- `database/migrations/2026-11-16_security_controls.sql`: creates the shared MySQL rate-limit table and marks non-bcrypt accounts for forced password change.
+
+Apply the security-controls migration before deploying the corresponding server version. Existing legacy-password users must sign in once and immediately choose a new password before accessing the application. New managed and bulk-imported accounts also require a password change at first login.
 
 Important table families referenced by code:
 
@@ -456,7 +461,7 @@ Manual smoke checks after changes:
 
 - Login as each affected role.
 - Verify route access and redirect behavior.
-- Check network calls use the expected `/AFMCMESS/api/...` base path.
+- Check network calls use the expected `/AFMCMESSTEST/api/...` base path.
 - Verify cart/buy/payment/invoice flows if order logic changed.
 - Verify inventory stock totals and reports if stock logic changed.
 - Verify kitchen/bar order status updates if fulfillment logic changed.
@@ -468,10 +473,11 @@ Nginx config is in `deployment/nginx/afmcmess.conf`.
 
 Deployment expectations from config:
 
-- Frontend build is served from `/var/www/AFMCMESSapplication`.
-- API proxy path is `/AFMCMESS/api/`.
-- Upload proxy path is `/AFMCMESS/uploads/`.
-- Backend is expected at `http://127.0.0.1:7300`.
+- Frontend build is served from `/var/www/AFMCMESSTESTapplication`.
+- API proxy path is `/AFMCMESSTEST/api/`.
+- Upload proxy path is `/AFMCMESSTEST/`.
+- Public image requests are served only for JPEG filenames referenced by `xxafmc_inventory`; the upload directory is no longer exposed as a directory-wide static mount.
+- Backend is expected at `http://127.0.0.1:8456`.
 - SPA fallback routes requests to `index.html`.
 
 For production:
@@ -481,16 +487,22 @@ For production:
 - Configure SSL and domain in Nginx.
 - Ensure upload folder permissions are correct.
 - Ensure CORS and `FRONTEND_URL` match the deployed domain.
+- Set `CORS_ORIGIN` to the exact trusted frontend origin(s); cookie-authenticated state-changing requests reject missing or untrusted `Origin`/`Referer` headers.
+- Apply `2026-11-16_security_controls.sql`; authentication rate limits use the shared MySQL table and fail closed if it is unavailable.
+- Keep the Node service behind the configured reverse proxy; production trusts one proxy hop for client IP rate-limit keys.
+- Order-status SSE messages are scoped to the owning user or assigned attendant; order-confirmed messages are limited to admins and the matching kitchen outlet.
 
 ## 15. Known Technical Notes And Cautions
 
-- The frontend expects API base path `/AFMCMESS/api` by default.
-- Backend default `PORT` is `5000`; deployment and frontend defaults imply `7300`.
+- The frontend expects API base path `/AFMCMESSTEST/api` by default.
+- Backend default `PORT` is `5000`; the TEST deployment uses `8456`.
 - Authentication uses JWT plus a MySQL-backed session. JWT is the main API authorization mechanism.
-- Password hashing appears to use MD5-compatible helpers. Treat auth changes carefully and plan migrations if upgrading hashing.
+- New and reset passwords use bcrypt. The security-controls migration forces existing non-bcrypt accounts through a password change; the login path no longer silently upgrades their legacy hash.
+- Passwords must be at least 12 characters and no more than 72 UTF-8 bytes (bcrypt's input limit); a local common-password denylist is used without transmitting password data to an external breach-check service.
+- Production suppresses legacy console output in favor of generic Winston events; new server logging should avoid raw errors, credentials, and business identifiers.
 - `database/schema.sql` is not a complete representation of all tables used by the application.
 - Some paths and filenames retain legacy spelling/casing. Avoid renaming unless you update all imports/routes.
-- `TEST_CASES.md` is currently untracked according to git status; do not remove it unless the team decides it is unnecessary.
+- `TEST_CASES.md` contains manually maintained behavior scenarios; update it when authentication or other observable flows change.
 
 ## 16. Existing Supporting Documents
 

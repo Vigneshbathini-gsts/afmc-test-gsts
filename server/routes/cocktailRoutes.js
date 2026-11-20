@@ -9,15 +9,16 @@ const {
 } = require("../controllers/cocktailController");
 const authMiddleware = require("../middleware/authMiddleware");
 const upload = require("../utils/uploadMiddleware");
+const requireRole = require("../middleware/requireRole");
 
 const router = express.Router();
 
 router.get("/", getCocktails);
 router.get("/ingredients/options", getCocktailIngredients);
 router.get("/ingredients/price", getCocktailIngredientPrice);
-router.post("/", authMiddleware, upload.single("image"), createCocktail);
 router.get("/:id", getCocktailById);
-router.put("/:id", authMiddleware, upload.single("image"), updateCocktail);
+router.post("/", requireRole(10), authMiddleware, upload.single("image"), upload.validateImageSignature, createCocktail);
+router.put("/:id", requireRole(10), authMiddleware, upload.single("image"), upload.validateImageSignature, updateCocktail);
 
 module.exports = router;
 

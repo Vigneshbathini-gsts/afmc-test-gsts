@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { userAPI } from "../../services/api";
+import { getPasswordPolicyError } from "../../utils/passwordPolicy";
 
 const STATUS_STYLES = {
   Active: "bg-[#ebf7ef] text-[#1f7a3d] border-[#cbe8d3]",
@@ -46,11 +47,8 @@ const validateCreateForm = (formData) => {
   if (!formData.userName.trim()) return "User name is required.";
   
   if (!formData.password) return "Password is required.";
-  if (formData.password.length < 6)
-    return "Password must be at least 6 characters.";
-  if (formData.password !== formData.confirmPassword) {
-    return "Password and confirm password must match.";
-  }
+  const passwordError = getPasswordPolicyError(formData.password, formData.confirmPassword);
+  if (passwordError) return passwordError;
   if (!formData.email.trim()) return "Email is required.";
   if (!EMAIL_REGEX.test(formData.email.trim()))
     return "Please enter a valid email address.";
@@ -671,8 +669,8 @@ export default function UserManagement() {
                       name="password"
                       value={formData.password}
                       onChange={handleFormChange}
-                      minLength={6}
-                      maxLength={20}
+                      minLength={12}
+                      maxLength={72}
                       placeholder="Enter password"
                       className="password-field w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 pr-10 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
                     />
@@ -697,8 +695,8 @@ export default function UserManagement() {
                       name="confirmPassword"
                       value={formData.confirmPassword}
                       onChange={handleFormChange}
-                      minLength={6}
-                      maxLength={20}
+                      minLength={12}
+                      maxLength={72}
                       placeholder="Re-enter password"
                       className="password-field w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 pr-10 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
                     />

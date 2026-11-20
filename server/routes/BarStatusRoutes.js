@@ -20,7 +20,7 @@ const adminOnly = (req, res, next) => {
   next();
 };
 
-router.get("/events", orderEvents.authenticateEventRequest, barStatusEvents.subscribe);
+router.get("/events", authMiddleware, barStatusEvents.subscribe);
 router.get("/", getBarStatus);
 router.put("/", authMiddleware, adminOnly, updateBarStatus);
 

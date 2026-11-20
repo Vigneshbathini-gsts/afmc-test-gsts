@@ -42,7 +42,7 @@ const updateWeeklyTimings = async (req, res) => {
 
     return res.status(400).json({
       success: false,
-      message: error.message,
+      message: "Failed to fetch mess timings",
     });
   }
 };

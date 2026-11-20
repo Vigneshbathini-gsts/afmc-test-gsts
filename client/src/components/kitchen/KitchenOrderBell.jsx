@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { FaBell, FaTimesCircle, FaUtensils } from "react-icons/fa";
 import { useLocation } from "react-router-dom";
 import { barOrdersAPI } from "../../services/api";
-import { useAuth } from "../../context/AuthContext";
 
 export default function KitchenOrderBell({ kitchen = "Bar" }) {
   const [notifications, setNotifications] = useState([]);
@@ -12,11 +11,6 @@ export default function KitchenOrderBell({ kitchen = "Bar" }) {
   const dropdownRef = useRef(null);
  
   const location = useLocation();
-  const { user } = useAuth();
-
-  const basePath =
-    String(user?.outletType || "").toUpperCase() === "KITCHEN" ? "/kitchen" : "/bar";
-
   //   Fetch Orders
   const fetchOrders = useCallback(async () => {
     try {
@@ -81,7 +75,7 @@ export default function KitchenOrderBell({ kitchen = "Bar" }) {
   const handleMarkAsRead = async (notificationId) => {
     // console.log("Marking notification as read:", notificationId);
     try {
-      const resp = await barOrdersAPI.markNotificationAsRead({
+      await barOrdersAPI.markNotificationAsRead({
         notification_id: notificationId,
       });
       // console.log("Mark as read response:", resp);

@@ -184,7 +184,7 @@ export default function ItemDetails() {
         const fetchItemDetails = async () => {
             try {
                 setLoading(true);
-                const response = await inventoryAPI.getById(id);
+                const response = await inventoryAPI.getCustomerById(id);
 
                 if (response.data.success) {
                     const fetchedItem = response.data.data;

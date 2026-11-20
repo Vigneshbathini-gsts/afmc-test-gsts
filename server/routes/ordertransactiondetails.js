@@ -334,11 +334,10 @@ const getOrderTransactionDetails = async (req, res) => {
       data: results,
     });
   } catch (error) {
-    console.error("Order Transaction Error:", error);
+    console.error("Failed to fetch order transactions");
     return res.status(500).json({
       success: false,
       message: "Error fetching order transactions",
-      error: error.message,
     });
   }
 };
@@ -381,11 +380,10 @@ const sendOptionResponse = async (res, query, errorLabel) => {
       data: mapApexOptions(rows),
     });
   } catch (error) {
-    console.error(`${errorLabel} Error:`, error);
+    console.error(`Failed to fetch ${errorLabel.toLowerCase()}`);
     return res.status(500).json({
       success: false,
       message: `Error fetching ${errorLabel.toLowerCase()}`,
-      error: error.message,
     });
   }
 };

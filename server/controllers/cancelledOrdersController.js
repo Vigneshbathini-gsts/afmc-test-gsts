@@ -67,11 +67,10 @@ exports.getCancelledOrders = async (req, res) => {
       data: rows,
     });
   } catch (error) {
-    console.error("Error fetching cancelled orders:", error);
+    console.error("Failed to fetch cancelled orders");
     return res.status(500).json({
       success: false,
       message: "Server error while fetching cancelled orders",
-      error: error.message,
     });
   }
 };

@@ -24,10 +24,10 @@ exports.confirmOrder = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error(" :", error);
+    console.error("Failed to confirm order");
     res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Unable to confirm order",
+      message: "Unable to confirm order",
     });
   }
 };
@@ -43,10 +43,10 @@ exports.getConfirmedOrderDetails = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Fetch confirmed order error:", error);
+    console.error("Failed to fetch confirmed order");
     res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Unable to fetch confirmed order",
+      message: "Unable to fetch confirmed order",
     });
   }
 };

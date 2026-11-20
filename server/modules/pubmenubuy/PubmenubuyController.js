@@ -9,10 +9,10 @@ exports.createPubMenuOrder = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Create pub menu order error:", error);
+    console.error("Failed to create pub menu order");
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Server error while creating order",
+      message: "Server error while creating order",
     });
   }
 };
@@ -35,10 +35,10 @@ exports.getPubMenuOrderSummary = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Fetch pub menu order summary error:", error);
+    console.error("Failed to fetch pub menu order summary");
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Server error while fetching order summary",
+      message: "Server error while fetching order summary",
     });
   }
 };
@@ -60,10 +60,10 @@ exports.cancelPubMenuOrder = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Cancel pub menu order error:", error);
+    console.error("Failed to cancel pub menu order");
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Server error while cancelling order",
+      message: "Server error while cancelling order",
     });
   }
 };
@@ -94,10 +94,10 @@ exports.updatePubMenuOrderItemQuantity = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Update pub menu order item quantity error:", error);
+    console.error("Failed to update pub menu order item quantity");
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Server error while updating order item quantity",
+      message: "Server error while updating order item quantity",
     });
   }
 };
@@ -122,10 +122,10 @@ exports.deletePubMenuOrderItem = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Delete pub menu order item error:", error);
+    console.error("Failed to delete pub menu order item");
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Server error while deleting order item",
+      message: "Server error while deleting order item",
     });
   }
 };
@@ -165,10 +165,10 @@ exports.updatePubMenuOrderLineQuantity = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Update pub menu order line quantity error:", error);
+    console.error("Failed to update pub menu order line quantity");
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Server error while updating quantity",
+      message: "Server error while updating quantity",
     });
   }
 };
@@ -204,10 +204,10 @@ exports.updatePubMenuOrderItemCustomization = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("Update pub menu order item customization error:", error);
+    console.error("Failed to update pub menu order customization");
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Server error while updating customization",
+      message: "Server error while updating customization",
     });
   }
 };

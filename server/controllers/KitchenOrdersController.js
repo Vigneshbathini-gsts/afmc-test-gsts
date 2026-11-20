@@ -454,10 +454,9 @@ END AS CAN_CANCEL,
     res.status(200).json(rows);
 
   } catch (error) {
-    console.error("Error fetching orders:", error);
+    console.error("Failed to fetch orders");
     res.status(500).json({
       message: "Failed to fetch orders",
-      error: error.message,
     });
   }
 };
@@ -734,11 +733,10 @@ exports.updateBarOrderStatus = async (req, res) => {
     if (connection) {
       try { await connection.rollback(); } catch (_) { }
     }
-    console.error("Error updating bar order status:", error);
+    console.error("Failed to update order status");
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.statusCode ? error.message : "Failed to update order status",
-      error: error.message,
+      message: "Failed to update order status",
     });
   } finally {
     if (connection) connection.release();
@@ -857,11 +855,10 @@ exports.getOrderItems = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error fetching order items:", error);
+    console.error("Failed to fetch order items");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch order items",
-      error: error.message,
     });
   }
 };
@@ -1467,11 +1464,11 @@ exports.processBarcodeScan = async (req, res) => {
 
   } catch (error) {
     if (connection && !transactionCommitted) await connection.rollback();
-    console.error("Barcode scan error:", error);
+    console.error("Barcode scan failed");
     return res.status(500).json({
       success: false,
       message: "Failed to process scan",
-      error: error?.message || String(error),
+      error: "Barcode scan failed",
     });
   } finally {
     if (connection) connection.release();
@@ -1489,11 +1486,10 @@ exports.getScannedItemsFromSession = async (req, res) => {
       data: scannedItems,
     });
   } catch (error) {
-    console.error("Error getting scanned items from session:", error);
+    console.error("Failed to get scanned items");
     return res.status(500).json({
       success: false,
       message: "Failed to get scanned items",
-      error: error.message,
     });
   }
 };
@@ -1510,11 +1506,10 @@ exports.clearScannedItemsFromSession = async (req, res) => {
       message: "Scanned items cleared from session",
     });
   } catch (error) {
-    console.error("Error clearing scanned items from session:", error);
+    console.error("Failed to clear scanned items");
     return res.status(500).json({
       success: false,
       message: "Failed to clear scanned items",
-      error: error.message,
     });
   }
 };
@@ -1546,7 +1541,7 @@ exports.getActiveBarOrders = async (req, res) => {
       data: rows,
     });
   } catch (error) {
-    console.error("Error fetching kitchen notifications:", error);
+    console.error("Failed to fetch kitchen notifications");
 
     res.status(500).json({
       success: false,
@@ -1590,7 +1585,7 @@ exports.markNotificationAsRead = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error updating notification:", error);
+    console.error("Failed to update notification");
 
     res.status(500).json({
       success: false,
@@ -1621,7 +1616,7 @@ exports.markAllNotificationsAsRead = async (req, res) => {
       count: result.affectedRows || 0,
     });
   } catch (error) {
-    console.error("Error clearing notifications:", error);
+    console.error("Failed to clear notifications");
 
     res.status(500).json({
       success: false,
@@ -1748,11 +1743,10 @@ exports.getCocktailDetailsById = async (req, res) => {
     res.status(200).json(response);
 
   } catch (error) {
-    console.error("Error fetching cocktail details:", error);
+    console.error("Failed to fetch cocktail details");
     res.status(500).json({
       success: false,
       message: "Failed to fetch cocktail details",
-      error: error.message,
     });
   }
 };
@@ -1845,11 +1839,11 @@ exports.getCancelledOrders = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Error in getCancelledOrders:", err);
+    console.error("Failed to fetch cancelled orders");
 
     res.status(500).json({
       success: false,
-      message: err.message || "Failed to fetch cancelled orders",
+      message: "Failed to fetch cancelled orders",
     });
 
   }
@@ -1996,11 +1990,10 @@ WHERE kn.ordernumber = ?
     if (connection) {
       try { await connection.rollback(); } catch (_) { }
     }
-    console.error("Error cancelling bar order item:", error);
+    console.error("Failed to cancel order item");
     return res.status(500).json({
       success: false,
       message: "Failed to cancel order item",
-      error: error.message,
     });
   } finally {
     if (connection) connection.release();
@@ -2123,11 +2116,10 @@ exports.getOrderHistory = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ Order History Error:", err);
+    console.error("Failed to fetch order history");
     res.status(500).json({
       success: false,
       message: "Failed to fetch order history",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
@@ -2210,11 +2202,10 @@ exports.getOrderHistoryItemDetails = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ Order Item Details Error:", err);
+    console.error("Failed to fetch order history details");
     res.status(500).json({
       success: false,
       message: "Failed to fetch order item details",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
@@ -2275,10 +2266,10 @@ exports.getOrderDetailsByOrderNumber = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ Error fetching order details:", err);
+    console.error("Failed to fetch order details");
     res.status(500).json({
       success: false,
-      message: err.message || "Internal Server Error"
+      message: "Failed to fetch order details"
     });
 
   } finally {
@@ -2373,12 +2364,11 @@ exports.completeOrder = async (req, res) => {
       } catch (_) { }
     }
 
-    console.error("Error completing order:", error);
+    console.error("Failed to complete order");
 
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.statusCode ? error.message : "Failed to complete order",
-      error: error.message
+      message: "Failed to complete order"
     });
 
   } finally {

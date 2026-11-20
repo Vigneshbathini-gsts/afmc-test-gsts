@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { FaSearch, FaUndoAlt, FaBan, FaChevronLeft, FaChevronRight, FaArrowLeft, FaDownload, FaTimes } from "react-icons/fa";
+import { FaSearch, FaUndoAlt, FaChevronLeft, FaChevronRight, FaArrowLeft, FaDownload, FaTimes } from "react-icons/fa";
 import { cancelledOrdersAPI } from "../../services/api";
 import OrderDetailsModal from "../../components/OrderDetailsModal";
 import { useNavigate } from "react-router-dom";

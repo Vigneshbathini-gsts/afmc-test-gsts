@@ -1,6 +1,8 @@
 const express = require("express");
 const authMiddleware = require("../middleware/authMiddleware");
+const requireRole = require("../middleware/requireRole");
 const router = express.Router();
+router.use(requireRole(10));
 
 const {
   fetchAdminOrderHistory,

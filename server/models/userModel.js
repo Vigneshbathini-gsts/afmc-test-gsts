@@ -1,5 +1,5 @@
 const db = require("../config/db");
-const crypto = require("crypto");
+const { hashPassword } = require("../helpers/authHelper");
 const { formatToSql, toISO } = require("../utils/dateUtils");
 
 const BASE_USER_SELECT = `
@@ -247,11 +247,7 @@ const createUser = async ({
     throw new Error("Unable to resolve role for selected login type");
   }
 
-  const md5Password = crypto
-    .createHash("md5")
-    .update(String(password))
-    .digest("hex")
-    .toUpperCase();
+  const hashedPassword = await hashPassword(password);
 
   const connection = await db.getConnection();
 
@@ -303,7 +299,7 @@ const createUser = async ({
       [
         nextUserId,
         userName,
-        md5Password,
+        hashedPassword,
         firstName,
         lastName,
         email,
@@ -315,7 +311,7 @@ const createUser = async ({
         formatToSql(new Date()),
         "A",
         "Y",
-        md5Password,
+        hashedPassword,
       ]
     );
 
@@ -408,9 +404,6 @@ const updateUser = async (
     connection.release();
   }
 };
-
-const encryptLegacyPassword = (password) =>
-  crypto.createHash("md5").update(String(password)).digest("hex").toUpperCase();
 
 const createBulkUsers = async ({ rows, createdBy }) => {
   const connection = await db.getConnection();
@@ -527,7 +520,7 @@ const createBulkUsers = async ({ rows, createdBy }) => {
         `
       );
 
-      const encryptedPassword = encryptLegacyPassword(row.password);
+      const hashedPassword = await hashPassword(row.password);
 
       await connection.execute(
         `
@@ -556,18 +549,18 @@ const createBulkUsers = async ({ rows, createdBy }) => {
         [
           nextUserRow?.nextUserId,
           row.email || row.userName,
-          encryptedPassword,
+          hashedPassword,
           nextOfficerId,
           role.ROLE,
           role.ROLE_ID,
           "Member",
-          "N",
+          "Y",
           createdBy,
           formatToSql(new Date()),
           formatToSql(new Date()),
           createdBy,
           "A",
-          encryptedPassword,
+          hashedPassword,
           row.email,
           row.phoneNumber,
           row.firstName,

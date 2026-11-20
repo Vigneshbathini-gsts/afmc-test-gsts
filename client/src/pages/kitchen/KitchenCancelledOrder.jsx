@@ -58,7 +58,7 @@ const KitchenCancelledOrder = () => {
             const ordersData = response.data?.data || [];
             // console.log("API response for cancelled orders:", ordersData);
             setCancelledOrders(ordersData);
-            console.log(`Loaded ${ordersData.length} cancelled orders`);
+            console.log("Loaded cancelled orders");
         } catch (error) {
             console.error('Error fetching cancelled orders:', error);
             alert('Failed to fetch cancelled orders');
@@ -153,7 +153,7 @@ const KitchenCancelledOrder = () => {
                 [orderNumber]: details
             }));
         } catch (error) {
-            console.error(`Error fetching details for order ${orderNumber}:`, error);
+            console.error("Error fetching order details:", error);
         } finally {
             setLoadingDetails(false);
         }

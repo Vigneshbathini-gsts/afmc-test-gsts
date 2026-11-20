@@ -18,21 +18,21 @@ const trimTrailingSlash = (value) => value.replace(/\/+$/, "");
 
 const getDefaultApiBase = () => {
   if (typeof window === "undefined") {
-    return "http://localhost:7300/AFMCMESS/api";
+    return "http://localhost:8456/AFMCMESSTEST/api";
   }
 
   const { protocol, hostname, port, origin } = window.location;
 
   if (hostname === "localhost" || hostname === "127.0.0.1") {
-    const backendOrigin = `${protocol}//${hostname}:7300`;
-    return `${backendOrigin}/AFMCMESS/api`;
+    const backendOrigin = `${protocol}//${hostname}:8456`;
+    return `${backendOrigin}/AFMCMESSTEST/api`;
   }
 
   if (port === "3000") {
-    return `${protocol}//${hostname}:7300/AFMCMESS/api`;
+    return `${protocol}//${hostname}:8456/AFMCMESSTEST/api`;
   }
 
-  return `${origin}/AFMCMESS/api`;
+  return `${origin}/AFMCMESSTEST/api`;
 };
 
 export const API_BASE_URL = trimTrailingSlash(
@@ -94,9 +94,8 @@ api.interceptors.response.use(
 // Auth-aware fetch helper (for legacy fetch usage)
 // ================================
 export async function authFetchJson(input, init = {}) {
-  const token = getToken();
   const headers = new Headers(init.headers || {});
-
+  const token = getToken();
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
@@ -230,6 +229,7 @@ export const inventoryAPI = {
   getStockOutItemByBarcode: (barcode) => api.get(`/inventory/stock-out/barcode/${barcode}`),
   createStockOut: (data) => api.post("/inventory/stock-out", data),
   getById: (id) => api.get(`/inventory/${id}`),
+  getCustomerById: (id) => api.get(`/inventory/customer/${id}`),
   addStock: (data) => api.post("/inventory/add-stock", data),
   updateStock: (id, data) => api.put(`/inventory/${id}`, data),
   deleteStock: (id) => api.delete(`/inventory/${id}`),
@@ -331,7 +331,10 @@ export const barOrdersAPI = {
   getActiveOrders: (kitchen = "Bar") => api.get(`/bar-orders/active?kitchen=${kitchen}`),
   markNotificationAsRead: (data) => api.put("/bar-orders/notifications/read", data),
   markAllNotificationsAsRead: (data) => api.put("/bar-orders/notifications/read-all", data),
-getCocktailDetailsById: (itemId, orderNumber) => api.get(`/bar-orders/cocktail/${itemId}?orderNumber=${orderNumber}`),
+getCocktailDetailsById: (itemId, orderNumber) =>
+  api.get(`/bar-orders/cocktail/${itemId}`, {
+    params: orderNumber ? { orderNumber } : {},
+  }),
 getCancelledOrders: (params) => api.get("/bar-orders/cancelled-orders", { params }),
 getOrderHistory: (params) => api.get("/bar-orders/order-history", { params }),
 getOrderDetailsByOrderNumber: (orderNumber, kitchen) => api.get(`/bar-orders/cancelled-order-details/${orderNumber}`, { params: { kitchen } }),
@@ -357,6 +360,7 @@ export const collectionAPI = {
 // OFFERS API
 // ================================
 export const offersAPI = {
+  getActiveOffers: () => api.get("/offers/active"),
   getAllOffers: (includeExpired = false) =>
     api.get(includeExpired ? "/offers?includeExpired=true" : "/offers"),
   getOfferById: (id) => api.get(`/offers/${id}`),

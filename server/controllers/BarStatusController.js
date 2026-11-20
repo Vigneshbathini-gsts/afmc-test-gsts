@@ -14,7 +14,7 @@ const getBarStatus = async (req, res) => {
         //   console.error(error);
         return res.status(500).json({
             success: false,
-            message: error.message
+            message: "Failed to fetch bar status",
         });
 
     }
@@ -44,11 +44,11 @@ const updateBarStatus = async (req, res) => {
         });
     }
     catch (error) {
-        console.error(error);
+        console.error("Failed to update bar status");
 
         return res.status(400).json({
             success: false,
-            message: error.message,
+            message: "Failed to update bar status",
         });
     }
 }

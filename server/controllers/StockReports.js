@@ -135,12 +135,11 @@ LIMIT ${limitNum} OFFSET ${offsetNum}
       data: results,
     });
   } catch (error) {
-    console.error("Stock Report Error:", error);
+    console.error("Failed to fetch stock report");
 
     res.status(500).json({
       success: false,
       message: "Error fetching stock report",
-      error: error.message,
     });
   }
 };

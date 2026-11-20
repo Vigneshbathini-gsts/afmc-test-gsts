@@ -16,7 +16,8 @@ const getPaymentModes = async (req, res) => {
 
     return successResponse(res, "Payment modes fetched", modes);
   } catch (error) {
-    return errorResponse(res, error.message);
+    console.error("Failed to fetch payment modes");
+    return errorResponse(res, "Unable to fetch payment modes.");
   }
 };
 
@@ -31,7 +32,8 @@ const updatePayment = async (req, res) => {
 
     return successResponse(res, "Payment updated", response);
   } catch (error) {
-    return errorResponse(res, error.message);
+    console.error("Failed to update payment");
+    return errorResponse(res, "Unable to update payment.");
   }
 };
 

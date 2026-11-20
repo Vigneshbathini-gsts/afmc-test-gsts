@@ -235,11 +235,8 @@ exports.createOffer = async (req, res) => {
     });
 
   } catch (err) {
-    console.log("Create Offer Error:", err);
-    res.status(500).json({ 
-      message: "Internal server error",
-      error: err.message 
-    });
+    console.error("Failed to create offer");
+    res.status(500).json({ message: "Internal server error" });
   }
 };
 
@@ -300,11 +297,8 @@ exports.updateOffer = async (req, res) => {
     });
 
   } catch (err) {
-    console.log("Update Offer Error:", err);
-    res.status(500).json({ 
-      message: "Internal server error",
-      error: err.message 
-    });
+    console.error("Failed to update offer");
+    res.status(500).json({ message: "Internal server error" });
   }
 };
 

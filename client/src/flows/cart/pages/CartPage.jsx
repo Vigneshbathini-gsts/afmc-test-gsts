@@ -15,7 +15,7 @@ import {
     getSelectedAttendantCustomerPayload,
 } from "../../../utils/attendantCustomer";
 
-const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCIMAGES/";
+const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST/";
 
 // Confirmation Modal component
 const ConfirmModal = ({ isOpen, onClose, onConfirm, title, message, confirmLabel = "Confirm", cancelLabel = "Cancel" }) => {
@@ -63,18 +63,14 @@ export default function CartPage({ isAttendant = false }) {
     const navigate = useNavigate();
     const [cartItems, setCartItems] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
+    const [, setError] = useState(null);
     const [updatingItemId, setUpdatingItemId] = useState(null);
     const [cocktailDetailsByCartId, setCocktailDetailsByCartId] = useState({});
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, cartId: null });
     const [proceedConfirmOpen, setProceedConfirmOpen] = useState(false);
     const [stockLimitImageMessages, setStockLimitImageMessages] = useState({});
     const [failedImageKeys, setFailedImageKeys] = useState({});
-    const quantityDebounceRef = useRef({});
-    const pendingQuantityRef = useRef({});
     const confirmedQuantityRef = useRef({});
-
-    const activeStockToast = useRef(null);
 
 
     const stockToastId = "stock-alert";
@@ -196,7 +192,7 @@ export default function CartPage({ isAttendant = false }) {
         } finally {
             setLoading(false);
         }
-    }, [userId, setCartCount]);
+    }, [userId, setCartCount, showToast]);
 
     useEffect(() => {
         fetchCartItems();
@@ -314,27 +310,7 @@ console.log("Multiplier:", getItemPegMultiplier(currentItem));
         } finally {
             setUpdatingItemId(null);
         }
-    }, [cartItems, cocktailDetailsByCartId, setCocktailDetailsByCartId, setCartItems, setCartCount, showToast, showStockLimitOnImage, clearStockLimitOnImage]);
-
-    const commitQuantityUpdate = useCallback((cartId, quantity) => {
-        // Optimistic local update so the UI feels instant
-        setCartItems((prev) =>
-            prev.map((it) => (Number(it.cartId) === Number(cartId) ? { ...it, quantity } : it))
-        );
-
-        pendingQuantityRef.current[cartId] = quantity;
-
-        if (quantityDebounceRef.current[cartId]) {
-            clearTimeout(quantityDebounceRef.current[cartId]);
-        }
-
-        quantityDebounceRef.current[cartId] = setTimeout(async () => {
-            const finalQty = pendingQuantityRef.current[cartId];
-            delete quantityDebounceRef.current[cartId];
-            delete pendingQuantityRef.current[cartId];
-            await handleQuantityUpdate(cartId, finalQty); // your existing validated update function
-        }, 500); // wait 500ms after the last click before hitting the server
-    }, [handleQuantityUpdate]);
+    }, [cartItems, cocktailDetailsByCartId, setCocktailDetailsByCartId, setCartItems, setCartCount, showToast, showStockAlert, showStockLimitOnImage, clearStockLimitOnImage]);
 
     const handleRemoveItem = useCallback(async () => {
         const { cartId } = confirmModal;
@@ -361,26 +337,16 @@ console.log("Multiplier:", getItemPegMultiplier(currentItem));
             setError(err?.response?.data?.message || "Unable to remove item");
             showToast(err?.response?.data?.message || "Failed to remove item", 'error');
         }
-    }, [confirmModal, setCartCount]);
+    }, [confirmModal, isAttendant, navigate, setCartCount, showToast]);
 
     const handleEditItem = useCallback((itemId, cartId) => {
         const basePath = isAttendant ? "/attendant" : "/user";
         navigate(`${basePath}/item/${itemId}?cartId=${encodeURIComponent(cartId)}`, { state: { cartId } });
     }, [navigate, isAttendant]);
 
-    const handleProceedToBuy = useCallback(() => {
-        if (cartItems.length === 0) return;
-        if (hasOutOfStockItem) {
-            showToast("Some items in your cart are out of stock. Please remove or update them before proceeding.", 'error');
-            return;
-        }
-        setProceedConfirmOpen(true);
-    }, [cartItems.length]);
-
-
     const getItemStockInfo = useCallback((item) => {
         const isCocktailItem = isCocktailOrMocktail(item);
-        console.log(`Getting stock info for item ${item.cartId} (cocktail: ${isCocktailItem})`);
+        console.log("Getting stock info for cart item");
         const cocktailDetails = isCocktailItem ? cocktailDetailsByCartId[String(item.cartId)] : null;
 
         const cocktailDetailsStockStatus = Array.isArray(cocktailDetails) && cocktailDetails.length > 0
@@ -415,6 +381,15 @@ console.log("Multiplier:", getItemPegMultiplier(currentItem));
         () => cartItems.some((item) => !item.isFreeItem && getItemStockInfo(item).effectiveOutOfStock),
         [cartItems, getItemStockInfo]
     );
+
+    const handleProceedToBuy = useCallback(() => {
+        if (cartItems.length === 0) return;
+        if (hasOutOfStockItem) {
+            showToast("Some items in your cart are out of stock. Please remove or update them before proceeding.", 'error');
+            return;
+        }
+        setProceedConfirmOpen(true);
+    }, [cartItems.length, hasOutOfStockItem, showToast]);
 
 
     const handleProceedConfirm = useCallback(() => {
@@ -485,7 +460,14 @@ console.log("Multiplier:", getItemPegMultiplier(currentItem));
                     if (required > availableForOrder) {
                         showToast(`Insufficient stock for item ${code}. Required: ${required}, Available: ${availableApi}`, 'error');
                         // find an item using this code to show image overlay
-                        const offendingItem = cartItems.find((it) => Number(it.itemId) === Number(code) || String(it.cartId) in cocktailDetailsByCartId && (cocktailDetailsByCartId[String(it.cartId)] || []).some(d => Number(d?.ITEM_CODE ?? d?.itemCode) === Number(code)));
+                        const offendingItem = cartItems.find(
+                            (it) =>
+                                Number(it.itemId) === Number(code) ||
+                                (String(it.cartId) in cocktailDetailsByCartId &&
+                                    (cocktailDetailsByCartId[String(it.cartId)] || []).some(
+                                        (d) => Number(d?.ITEM_CODE ?? d?.itemCode) === Number(code)
+                                    ))
+                        );
                         if (offendingItem) showStockLimitOnImage(offendingItem, 'Out of Stock');
                         setProceedConfirmOpen(false);
                         setLoading(false);
@@ -524,7 +506,7 @@ console.log("Multiplier:", getItemPegMultiplier(currentItem));
         };
 
         proceed();
-    }, [navigate, isAttendant, showToast, cartItems, cocktailDetailsByCartId, setCocktailDetailsByCartId, showStockLimitOnImage]);
+    }, [navigate, isAttendant, showToast, showStockAlert, cartItems, cocktailDetailsByCartId, setCocktailDetailsByCartId, showStockLimitOnImage]);
 
     const handleGoToMenu = useCallback(() => {
         const basePath = isAttendant ? "/attendant" : "/user";
@@ -777,7 +759,7 @@ console.log("Multiplier:", getItemPegMultiplier(currentItem));
             </div>
 
             {/* Add custom CSS for animations */}
-            <style jsx>{`
+            <style>{`
                 @keyframes scale-in {
                     from {
                         transform: scale(0.95);

@@ -145,6 +145,48 @@ exports.getItemById = async (req, res) => {
   }
 };
 
+exports.getCustomerItemById = async (req, res) => {
+  try {
+    const itemId = Number(req.params.id);
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      return res.status(400).json({ success: false, message: "Valid item ID is required" });
+    }
+
+    let item = await cocktailModel.getCocktailItemById(itemId);
+    if (!item) {
+      item = await inventoryModel.getItemById(itemId);
+    }
+
+    if (!item) {
+      return res.status(404).json({ success: false, message: "Item not found" });
+    }
+
+    const customerItem = {
+      ITEM_ID: item.ITEM_ID,
+      ITEM_NAME: item.ITEM_NAME,
+      DESCRIPTION: item.DESCRIPTION,
+      ITEM_CODE: item.ITEM_CODE,
+      CATEGORY_ID: item.CATEGORY_ID,
+      SUB_CATEGORY: item.SUB_CATEGORY,
+      UNIT_PRICE: item.UNIT_PRICE,
+      FOOD_PR_CHARGES: item.FOOD_PR_CHARGES,
+      PR_CHARGES: item.PR_CHARGES,
+      "A/C_UNIT": item["A/C_UNIT"],
+      IMAGE_URL: item.IMAGE_URL,
+      IMAGE: item.IMAGE,
+      MIME_TYPE: item.MIME_TYPE,
+      FILE_NAME: item.FILE_NAME,
+      STOCK_QUANTITY: item.STOCK_QUANTITY,
+      details: Array.isArray(item.details) ? item.details : [],
+    };
+
+    return res.status(200).json({ success: true, data: customerItem });
+  } catch (error) {
+    console.error("Error fetching customer item details:", error);
+    return res.status(500).json({ success: false, message: "Failed to load item details" });
+  }
+};
+
 exports.checkBarcodeExists = async (req, res) => {
   try {
     const { barcode } = req.params;

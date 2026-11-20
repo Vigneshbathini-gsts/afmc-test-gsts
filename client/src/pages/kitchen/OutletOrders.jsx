@@ -9,7 +9,7 @@ import {
   FaCocktail,
 } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
-import { API_BASE_URL, barOrdersAPI } from "../../services/api";
+import { barOrdersAPI } from "../../services/api";
 import { toInitCap } from "../../utils/textFormat";
 import { formatDisplayDate } from "../../utils/dateUtils";
 
@@ -27,7 +27,6 @@ export default function OutletOrders({ kitchenType = "Bar" }) {
   const knownOrderKeysRef = useRef(new Set());
   const hasLoadedOrdersRef = useRef(false);
   const audioContextRef = useRef(null);
-  const skipNextDetectedSoundRef = useRef(false);
   const [statusFilter, setStatusFilter] = useState("All");
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -123,10 +122,9 @@ export default function OutletOrders({ kitchenType = "Bar" }) {
       hasLoadedOrdersRef.current = true;
       setOrders(nextOrders);
 
-      if (hasNewOrder && playOnNew && !skipNextDetectedSoundRef.current) {
+      if (hasNewOrder && playOnNew) {
         playNewOrderSound();
       }
-      skipNextDetectedSoundRef.current = false;
     } catch (err) {
       console.error(err);
     } finally {
@@ -139,45 +137,6 @@ export default function OutletOrders({ kitchenType = "Bar" }) {
     hasLoadedOrdersRef.current = false;
     fetchOrders();
   }, [fetchOrders]);
-
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token || typeof EventSource === "undefined") return undefined;
-
-    const source = new EventSource(
-      `${API_BASE_URL}/order-events?token=${encodeURIComponent(token)}`,
-      { withCredentials: true }
-    );
-
-    const handleOrderConfirmed = (event) => {
-      let payload = {};
-      try {
-        payload = JSON.parse(event.data || "{}");
-      } catch {
-        payload = {};
-      }
-
-      const eventKitchenTypes = Array.isArray(payload.kitchenTypes)
-        ? payload.kitchenTypes.map((value) => String(value).toLowerCase())
-        : [];
-      const isForThisOutlet =
-        eventKitchenTypes.length === 0 ||
-        eventKitchenTypes.includes(String(kitchenType).toLowerCase());
-
-      if (!isForThisOutlet) return;
-
-      skipNextDetectedSoundRef.current = true;
-      playNewOrderSound();
-      fetchOrders({ silent: true, playOnNew: false });
-    };
-
-    source.addEventListener("order-confirmed", handleOrderConfirmed);
-
-    return () => {
-      source.removeEventListener("order-confirmed", handleOrderConfirmed);
-      source.close();
-    };
-  }, [fetchOrders, kitchenType, playNewOrderSound]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -294,11 +253,6 @@ export default function OutletOrders({ kitchenType = "Bar" }) {
       default:
         return "bg-gray-50 text-gray-600 border border-gray-200";
     }
-  };
-
-  const getStatusCount = (status) => {
-    if (status === "All") return orders.length;
-    return orders.filter(o => o.STATUS === status).length;
   };
 
   return (

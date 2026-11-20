@@ -1,19 +1,41 @@
+const dotenv = require("dotenv");
+dotenv.config();
+
 const express = require("express");
 const cors = require("cors");
-const dotenv = require("dotenv");
-const path = require("path");
+const helmet = require("helmet");
 const session = require("express-session");
 const MySQLSession = require("express-mysql-session");
 const timeout = require("connect-timeout");
-const upload = require("./utils/uploadMiddleware");
+const publicCatalogImage = require("./middleware/publicCatalogImage");
 const { createNetworkGuardMiddleware, isNetworkError, buildRetryableErrorResponse } = require("./utils/asyncHandler");
+const authMiddleware = require("./middleware/authMiddleware");
+const csrfProtection = require("./middleware/csrfProtection");
+const logger = require("./utils/logger");
 
-dotenv.config();
+const isProduction = process.env.NODE_ENV === "production";
+if (isProduction) {
+  console.log = () => logger.info("Legacy console log suppressed");
+  console.error = () => logger.error("Legacy console error suppressed");
+}
+const requiredSecret = (name, minimum = 32) => {
+  const value = process.env[name];
+  const isPlaceholder = /^(?:secret|changeme|change-me|default|your-secret-key|replace[_ -]with[_ -].*)$/i.test(
+    value || ""
+  );
+  if (!value || value.length < minimum || isPlaceholder) {
+    throw new Error(`${name} must be configured with at least ${minimum} non-default characters`);
+  }
+  return value;
+};
+const SESSION_SECRET = requiredSecret("SESSION_SECRET");
+requiredSecret("JWT_SECRET");
 
 const app = express();
-const BASE_PATH = `/${(process.env.BASE_PATH || "AFMCMESS").replace(
+app.set("trust proxy", isProduction ? 1 : false);
+const BASE_PATH = `/${(process.env.BASE_PATH || "AFMCMESSTEST").replace(
   /^\/+|\/+$/g,
-  ""
+  "",
 )}`;
 const API_BASE_PATH = `${BASE_PATH}/api`;
 
@@ -44,13 +66,13 @@ app.use(
   session({
     store: sessionStore,
     name: process.env.SESSION_COOKIE_NAME || "afmc.sid",
-    secret: process.env.SESSION_SECRET || "your-secret-key",
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      secure: isProduction,
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: process.env.COOKIE_SAME_SITE || (isProduction ? "none" : "lax"),
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     },
   })
@@ -58,31 +80,35 @@ app.use(
 
 app.use(
   cors({
-    origin: (() => {
-      const defaults = ["http://localhost:3000", "http://localhost:5173"];
-      const raw = process.env.CORS_ORIGIN;
-      if (!raw) return defaults;
-
-      const configured = raw
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-
-      const merged = [...configured];
-      for (const origin of defaults) {
-        if (!merged.includes(origin)) merged.push(origin);
-      }
-      return merged;
-    })(),
+    origin: (process.env.CORS_ORIGIN || (isProduction ? "" : "http://localhost:3000,http://localhost:5173"))
+      .split(",").map((s) => s.trim()).filter(Boolean),
     credentials: true,
   })
 );
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      frameAncestors: ["'none'"],
+      objectSrc: ["'none'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'", ...(process.env.CSP_CONNECT_SRC || "").split(",").map((s) => s.trim()).filter(Boolean)],
+    },
+  },
+  referrerPolicy: { policy: "no-referrer" },
+  hsts: isProduction ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+}));
 
 const REQUEST_TIMEOUT_SECONDS = Number(process.env.REQUEST_TIMEOUT_SECONDS || 10);
 
 //Global Gateway Request Timeouts
 app.use(timeout(`${REQUEST_TIMEOUT_SECONDS}s`));
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: false, limit: "100kb" }));
 app.use(createNetworkGuardMiddleware());
 
 // Timeout Halt Validator Middleware
@@ -101,8 +127,11 @@ const haltOnTimeout = (req, res, next) => {
   next();
 };
 
-app.use("/uploads", express.static(upload.uploadPath));
-app.use(`${BASE_PATH}/uploads`, express.static(upload.uploadPath));
+app.get(
+  ["/uploads/:filename", `${BASE_PATH}/uploads/:filename`, `${BASE_PATH}/:filename`],
+  haltOnTimeout,
+  publicCatalogImage
+);
 
 app.get("/", haltOnTimeout, (req, res) => {
   res.json({ status: "Server is running", basePath: BASE_PATH, apiBasePath: API_BASE_PATH });
@@ -138,6 +167,25 @@ const messTimingsRoutes = require("./routes/MessTimingsRoutes");
 
 const apiPrefixes = ["/api", API_BASE_PATH];
 for (const prefix of apiPrefixes) {
+  // Protect every API endpoint by default. Only authentication bootstrap
+  // endpoints, the read-only mess status endpoint, and SSE endpoints with
+  // their own token validation are public at this layer.
+  app.use(prefix, csrfProtection, (req, res, next) => {
+    const publicPaths = new Set([
+      "/auth/login",
+      "/auth/get-role",
+      "/auth/forgot-password",
+      "/auth/reset-password",
+      "/mess-timings/status",
+    ]);
+
+    if (publicPaths.has(req.path)) {
+      return next();
+    }
+
+    return authMiddleware(req, res, next);
+  });
+
   // Attached haltOnTimeout guard specifically before custom app business endpoints
   app.use(`${prefix}/auth`, haltOnTimeout, authRoutes);
   app.use(`${prefix}/reports`, haltOnTimeout, reportRoutes);
@@ -153,6 +201,7 @@ for (const prefix of apiPrefixes) {
   app.use(`${prefix}/profit`, haltOnTimeout, profitRoutes);
   app.use(`${prefix}/notifications`, haltOnTimeout, notificationRoutes);
   app.use(`${prefix}/cancelled-orders`, haltOnTimeout, cancelledOrdersRoutes);
+  app.use(`${prefix}/mess-timings`, haltOnTimeout, messTimingsRoutes);
   
   app.use(prefix, haltOnTimeout, menuRoutesbeer);
   app.use(prefix, haltOnTimeout, Pubmenubuyroutes);
@@ -161,9 +210,8 @@ for (const prefix of apiPrefixes) {
   app.use(`${prefix}/invoice-report`, haltOnTimeout, InvoiceReportroute);
   app.use(`${prefix}/order-history`, haltOnTimeout, orderHistoryRoutes);
   app.use(`${prefix}/payment`, haltOnTimeout, paymentRoutes);
-  app.get(`${prefix}/order-events`, orderEvents.authenticateEventRequest, orderEvents.subscribe);
+  app.get(`${prefix}/order-events`, orderEvents.subscribe);
   app.use(`${prefix}/bar-status`, haltOnTimeout, barStatusRoutes);
-  app.use(`${prefix}/mess-timings`, haltOnTimeout, messTimingsRoutes);
 }
 
 // Global Custom Error Middleware (Catches timeout exceptions and file rules)
@@ -182,12 +230,19 @@ app.use((err, req, res, next) => {
 
   if (!err) return next();
 
-  const message = err.code === "LIMIT_FILE_SIZE"
-    ? "Image size must be 2MB or less."
-    : err.message || "Upload failed.";
+  if (err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({ success: false, message: "Image size must be 2MB or less." });
+  }
+  if (err.message === "Only JPG image files are allowed.") {
+    return res.status(400).json({ success: false, message: err.message });
+  }
 
-  res.status(400).json({ success: false, message });
+  logger.error("Unhandled request error", { code: err.code || "UNKNOWN" });
+  return res.status(500).json({
+    success: false,
+    message: "The request could not be completed.",
+  });
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+app.listen(PORT, () => logger.info("Server listening"));

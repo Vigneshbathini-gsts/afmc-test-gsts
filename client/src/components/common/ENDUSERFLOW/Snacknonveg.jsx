@@ -6,7 +6,7 @@ function Snacknonveg() {
   const [error, seterror] = useState("");
   const [selectedItem, setSelectedItem] = useState("");
 
-  const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCIMAGES/";
+  const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST/";
 
   useEffect(() => {
     fetchdata();

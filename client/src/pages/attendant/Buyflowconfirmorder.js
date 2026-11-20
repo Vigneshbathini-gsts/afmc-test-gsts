@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ChevronsLeft } from "lucide-react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import ConfirmOrderservice from "../../services/ConfirmOrderservice";
-import { API_BASE_URL } from "../../services/api";
-import { getToken } from "../../utils/authStorage";
 import { toInitCap } from "../../utils/textFormat";
 
 
@@ -67,7 +65,6 @@ export default function Buyflowconfirmorder() {
 
   useEffect(() => {
     let ignore = false;
-    let eventSource;
     let latestRequestVersion = 0;
 
     const fetchConfirmedOrder = async ({ silent = false } = {}) => {
@@ -102,44 +99,13 @@ export default function Buyflowconfirmorder() {
     };
 
     fetchConfirmedOrder();
-
-    const token = getToken();
-    if (typeof window !== "undefined" && typeof window.EventSource !== "undefined" && token) {
-      eventSource = new window.EventSource(
-        `${API_BASE_URL}/order-events?token=${encodeURIComponent(token)}`,
-        { withCredentials: true }
-      );
-
-      const handleStatusEvent = (event) => {
-        if (ignore) return;
-
-        try {
-          const payload = JSON.parse(event.data || "{}");
-          if (String(payload.orderNumber || "") !== String(orderNumber)) {
-            return;
-          }
-
-          fetchConfirmedOrder({ silent: true });
-        } catch (streamError) {
-          console.error("Unable to process order status stream event:", streamError);
-        }
-      };
-
-      eventSource.addEventListener("order-status-updated", handleStatusEvent);
-      eventSource.addEventListener("message", handleStatusEvent);
-
-      eventSource.onerror = () => {
-        if (!ignore) {
-          console.warn("Order status event stream disconnected");
-        }
-      };
-    }
+    const intervalId = orderNumber
+      ? window.setInterval(() => fetchConfirmedOrder({ silent: true }), 5000)
+      : null;
 
     return () => {
       ignore = true;
-      if (eventSource) {
-        eventSource.close();
-      }
+      if (intervalId) window.clearInterval(intervalId);
     };
   }, [orderNumber]);
 

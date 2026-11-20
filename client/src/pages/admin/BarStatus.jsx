@@ -6,7 +6,6 @@ import {
   FaDoorOpen,
   FaLock,
   FaSave,
-  FaSyncAlt,
   FaWineGlassAlt,
   FaArrowLeft,
 } from "react-icons/fa";

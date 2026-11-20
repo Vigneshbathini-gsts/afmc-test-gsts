@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { FaTimes } from "react-icons/fa";
 import { ChevronsLeft, Flame, Coffee, Utensils } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -16,7 +16,7 @@ import {
   getSelectedAttendantCustomerPayload,
 } from "../../utils/attendantCustomer";
 
-const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCIMAGES/";
+const BASEAPI = "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST/";
 
 const menuConfig = {
   drinks: {
@@ -124,6 +124,8 @@ function getMenuItemCode(item) {
   return Number.isFinite(itemCode) && itemCode > 0 ? itemCode : null;
 }
 
+// Legacy popup retained for compatibility with older dashboard state.
+// eslint-disable-next-line no-unused-vars
 function MenuPopup({ item, loading, onClose }) {
   const [qty, setQty] = useState("1");
   const [remarks, setRemarks] = useState("Din");
@@ -1142,6 +1144,8 @@ function FilterShell({ leftFilter, rightFilter, children }) {
   );
 }
 
+// Legacy filter retained for compatibility with older dashboard state.
+// eslint-disable-next-line no-unused-vars
 function SelectField({
   label,
   value,
@@ -1725,7 +1729,7 @@ function MenuDashboard() {
         toast.error(msg);
       } catch {
         // fallback to console if toast isn't available
-        console.error(msg);
+        console.error("Unable to display order error notification:", msg);
       }
     }
   };
@@ -1787,7 +1791,7 @@ function MenuDashboard() {
     const loadOffers = async () => {
       setOffersLoading(true);
       try {
-        const res = await offersAPI.getAllOffers();
+        const res = await offersAPI.getActiveOffers();
         const list = res?.data?.offers ?? res?.data?.data ?? res?.data ?? [];
         if (!alive) return;
         // console.log("Fetched offers:", list);       

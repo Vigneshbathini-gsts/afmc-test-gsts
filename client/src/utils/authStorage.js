@@ -1,6 +1,6 @@
 /**
  * Centralized authentication storage utilities
- * Handles localStorage operations for JWT tokens and user data
+ * Stores the JWT and non-sensitive user display state for Bearer authentication.
  */
 
 const AUTH_KEYS = {
@@ -17,15 +17,16 @@ const USER_SPECIFIC_PREFIXES = [
 
 /**
  * Store authentication data after successful login
- * @param {string} token - JWT token from server
  * @param {object} user - User object from server
+ * @param {string} token - JWT returned by the server
  * @param {boolean} rememberMe - Whether to remember the user
  */
-export const storeAuthData = (token, user, rememberMe = false) => {
+export const storeAuthData = (user, token, rememberMe = false) => {
   try {
-    if (token) {
-      localStorage.setItem(AUTH_KEYS.TOKEN, token);
+    if (typeof token !== "string" || !token.trim()) {
+      throw new Error("Authentication token is missing");
     }
+    localStorage.setItem(AUTH_KEYS.TOKEN, token);
     if (user) {
       localStorage.setItem(AUTH_KEYS.USER, JSON.stringify(user));
     }
@@ -131,7 +132,7 @@ export const getToken = () => {
   try {
     return localStorage.getItem(AUTH_KEYS.TOKEN);
   } catch (error) {
-    console.error("Error retrieving token:", error);
+    console.error("Error retrieving authentication token:", error);
     return null;
   }
 };

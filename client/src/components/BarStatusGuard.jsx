@@ -1,11 +1,10 @@
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { API_BASE_URL, barStatusAPI, messTimingsAPI } from "../services/api";
-import { getToken } from "../utils/authStorage";
+import { barStatusAPI, messTimingsAPI } from "../services/api";
 
 const EXEMPT_ROLES = [10, 40];
-const FALLBACK_POLL_INTERVAL_MS = 60000;
+const STATUS_POLL_INTERVAL_MS = 5000;
 
 function isPublicPath(pathname) {
   return (
@@ -23,9 +22,7 @@ export default function BarStatusGuard({ children }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const token = getToken();
-
-    if (isLoading || !token || !user || isPublicPath(location.pathname)) {
+    if (isLoading || !user || isPublicPath(location.pathname)) {
       return undefined;
     }
 
@@ -35,8 +32,6 @@ export default function BarStatusGuard({ children }) {
     }
 
     let cancelled = false;
-    let source;
-    let fallbackIntervalId;
 
     const handleStatus = (barStatus) => {
       if (!cancelled && barStatus?.bar_status === "Bar Is Close") {
@@ -71,30 +66,14 @@ export default function BarStatusGuard({ children }) {
 
     checkBarStatusOnce();
 
-    if (typeof EventSource !== "undefined") {
-      source = new EventSource(
-        `${API_BASE_URL}/bar-status/events?token=${encodeURIComponent(token)}`,
-        { withCredentials: true }
-      );
-
-      source.addEventListener("bar-status", (event) => {
-        try {
-          handleStatus(JSON.parse(event.data || "{}"));
-        } catch {
-          // Ignore invalid event payloads.
-        }
-      });
-    } else {
-      fallbackIntervalId = window.setInterval(
-        checkBarStatusOnce,
-        FALLBACK_POLL_INTERVAL_MS
-      );
-    }
+    const intervalId = window.setInterval(
+      checkBarStatusOnce,
+      STATUS_POLL_INTERVAL_MS
+    );
 
     return () => {
       cancelled = true;
-      if (source) source.close();
-      if (fallbackIntervalId) window.clearInterval(fallbackIntervalId);
+      window.clearInterval(intervalId);
     };
   }, [isLoading, location.pathname, navigate, user]);
 

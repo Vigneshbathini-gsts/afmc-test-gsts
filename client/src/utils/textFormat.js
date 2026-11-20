@@ -17,7 +17,7 @@ export function toInitCap(value) {
     if (lower === "ml") return "ml";
 
     const isAllCaps = raw === raw.toUpperCase() && /[A-Z]/.test(raw);
-    const hasSeparator = /[\/&]/.test(raw);
+    const hasSeparator = /[/&]/.test(raw);
     const isNumberLike = /^[0-9]+([.,][0-9]+)?$/.test(raw);
     const isShortAcronym = raw.length <= 3;
 

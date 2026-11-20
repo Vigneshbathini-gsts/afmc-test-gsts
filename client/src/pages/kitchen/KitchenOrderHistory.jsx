@@ -219,7 +219,7 @@ const KitchenOrderHistory = () => {
         }
       }));
     } catch (error) {
-      console.error(`Error fetching details for order ${orderNumber}:`, error);
+      console.error("Error fetching order details:", error);
     } finally {
       setLoadingDetails(false);
     }
@@ -552,7 +552,7 @@ const KitchenOrderHistory = () => {
                         <tbody className="divide-y divide-gray-200">
                           {orderItemDetails[selectedOrder.order_num].items.map((item, index) => {
                             // Debug log each item
-                            console.log(`Rendering item ${index}:`, item);
+                            console.log("Rendering order history item");
                             // Consider an item free only when explicitly marked or when type says "Free Item" or price is missing
                             const isFree = String(item.type || "").toLowerCase() === "free item" || item.is_free === true || item.price == null;
                             return (

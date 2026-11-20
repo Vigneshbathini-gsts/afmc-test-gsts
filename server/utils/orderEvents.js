@@ -1,28 +1,11 @@
-const jwt = require("jsonwebtoken");
-const ConfirmOrdermodel = require("../models/ConfirmOrdermodel");
-
-const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
 const clients = new Set();
 const HEARTBEAT_MS = 25000;
 
-function authenticateEventRequest(req, res, next) {
-  const header = req.headers.authorization;
-  const tokenFromHeader = header && header.startsWith("Bearer ") ? header.split(" ")[1] : "";
-  const token = tokenFromHeader || req.query.token;
-
-  if (!token) {
+function subscribe(req, res) {
+  if (!req.user) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET || JWT_SECRET);
-    return next();
-  } catch {
-    return res.status(401).json({ error: "Invalid token" });
-  }
-}
-
-function subscribe(req, res) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache, no-transform",
@@ -31,7 +14,7 @@ function subscribe(req, res) {
   });
   res.write(": connected\n\n");
 
-  const client = { res };
+  const client = { res, user: req.user };
   clients.add(client);
 
   const heartbeatId = setInterval(() => {
@@ -57,6 +40,33 @@ function buildOrderStatusUpdatePayload({ orderNumber, status, payment_status, pa
   };
 }
 
+function canReceiveOrderStatusUpdate(user, accessRows) {
+  const roleId = Number(user?.roleId);
+  const userId = Number(user?.userId);
+  const username = String(user?.username || "").toLowerCase();
+
+  return (
+    roleId === 10 ||
+    (roleId === 20 && Number(accessRows[0]?.user_id) === userId) ||
+    (roleId === 30 &&
+      accessRows.some(
+        (row) =>
+          Number(row.assigned_user_id) === userId ||
+          (username && String(row.created_by || "").toLowerCase() === username)
+      ))
+  );
+}
+
+function canReceiveOrderConfirmed(user, payload) {
+  const roleId = Number(user?.roleId);
+  const outletType = String(user?.outletType || "").toLowerCase();
+  const kitchenTypes = Array.isArray(payload?.kitchenTypes)
+    ? payload.kitchenTypes.map((type) => String(type).toLowerCase())
+    : [];
+
+  return roleId === 10 || (roleId === 40 && outletType && kitchenTypes.includes(outletType));
+}
+
 async function emitOrderStatusUpdate(orderNumber, overrides = {}) {
   const normalizedOrderNumber = String(orderNumber ?? "").trim();
   if (!normalizedOrderNumber) {
@@ -64,14 +74,32 @@ async function emitOrderStatusUpdate(orderNumber, overrides = {}) {
   }
 
   let snapshot = {};
+  let accessRows;
   try {
+    const db = require("../config/db");
+    const [rows] = await db.execute(
+      `SELECT oh.user_id, oh.created_by, kn.user_name AS assigned_user_id
+       FROM xxafmc_order_header oh
+       LEFT JOIN xxafmc_kitchen_notification kn ON kn.ordernumber = oh.order_num
+       WHERE oh.order_num = ?`,
+      [normalizedOrderNumber]
+    );
+    if (!rows.length) return;
+    accessRows = rows;
+  } catch {
+    console.error("Unable to verify order event access");
+    return;
+  }
+
+  try {
+    const ConfirmOrdermodel = require("../models/ConfirmOrdermodel");
     const data = await ConfirmOrdermodel.getConfirmedOrderDetails(normalizedOrderNumber);
     snapshot = {
       status: data?.header?.status,
       payment_status: data?.header?.payment_status,
     };
-  } catch (error) {
-    console.error("Unable to resolve order status snapshot:", error);
+  } catch {
+    console.error("Unable to resolve order status snapshot");
   }
 
   const payload = buildOrderStatusUpdatePayload({
@@ -82,6 +110,8 @@ async function emitOrderStatusUpdate(orderNumber, overrides = {}) {
   const body = `event: order-status-updated\ndata: ${JSON.stringify(payload)}\n\n`;
 
   for (const client of clients) {
+    if (!canReceiveOrderStatusUpdate(client.user, accessRows)) continue;
+
     try {
       client.res.write(body);
     } catch {
@@ -94,6 +124,8 @@ function emitOrderConfirmed(payload) {
   const body = `event: order-confirmed\ndata: ${JSON.stringify(payload)}\n\n`;
 
   for (const client of clients) {
+    if (!canReceiveOrderConfirmed(client.user, payload)) continue;
+
     try {
       client.res.write(body);
     } catch {
@@ -103,8 +135,9 @@ function emitOrderConfirmed(payload) {
 }
 
 module.exports = {
-  authenticateEventRequest,
   buildOrderStatusUpdatePayload,
+  canReceiveOrderConfirmed,
+  canReceiveOrderStatusUpdate,
   emitOrderConfirmed,
   emitOrderStatusUpdate,
   subscribe,

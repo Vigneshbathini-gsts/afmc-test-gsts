@@ -725,7 +725,6 @@ export default function OutletOrderDetails() {
                     ) : (
                       items.map((item, idx) => {
                         const scannedQty = getScannedQuantityByItemCode(item);
-                        const remainingQty = item.quantity - scannedQty;
                         return (
                           <tr key={item.ORDER_LINE_ID || idx} className="hover:bg-gray-50">
                             <td className="px-6 py-4 text-sm text-gray-800">

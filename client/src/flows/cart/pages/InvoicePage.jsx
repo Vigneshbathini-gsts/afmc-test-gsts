@@ -121,7 +121,10 @@ export default function InvoicePage() {
     setPaymentStatus(isCreditPayment ? "Un Paid" : "Paid");
   }, [isCreditPayment]);
 
-  const rawItems = Array.isArray(invoiceData?.items) ? invoiceData.items : [];
+  const rawItems = useMemo(
+    () => (Array.isArray(invoiceData?.items) ? invoiceData.items : []),
+    [invoiceData?.items]
+  );
   const items = rawItems.filter(
     (item) =>
       Number(item?.quantity || item?.QUANTITY || 0) > 0 &&

@@ -1,4 +1,4 @@
-﻿import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { FaPencilAlt } from "react-icons/fa";
 import { toInitCap } from "../utils/textFormat";
 

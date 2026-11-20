@@ -708,20 +708,7 @@ const getOrderItemDetails = async (req, res) => {
 
   } catch (error) {
 
-    console.error(
-      "Order Item Details Error:",
-      error
-    );
-
-    console.error(
-      "SQL:",
-      pagedBaseQuery
-    );
-
-    console.error(
-      "Values:",
-      baseValues
-    );
+    console.error("Failed to fetch order item report");
 
     return res.status(500).json({
       success: false,
@@ -729,8 +716,6 @@ const getOrderItemDetails = async (req, res) => {
       message:
         "Error fetching data",
 
-      error:
-        error.message,
     });
   }
 };
@@ -804,12 +789,11 @@ const getOrderItemFilterOptions = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Order Item Filter Options Error:", error);
+    console.error("Failed to fetch order item filter options");
 
     return res.status(500).json({
       success: false,
       message: "Error fetching order item filter options",
-      error: error.message,
     });
   }
 };

@@ -26,21 +26,10 @@ const getStatusClassName = (status) => {
   return "text-gray-500";
 };
 
-const formatCurrency = (value) =>
-  Number(value || 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-
 export default function OrderDetailsModal({ isOpen, onClose, orderNumber, includeCancelled = false }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  const grandTotal = items.reduce(
-    (total, item) => total + parseNumber(item.subtotal || item.SUBTOTAL || item.total || 0),
-    0
-  );
 
   useEffect(() => {
     if (!isOpen || !orderNumber) return;

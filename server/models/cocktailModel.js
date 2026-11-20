@@ -4,7 +4,7 @@ const { isExcludedLiquorSubcategory } = require("../helpers/pricingHelper");
 const DETAIL_TABLE = "xxafmc_cocktails_mocktails_details";
 const AFMC_IMAGE_PUBLIC_BASE_URL = (
   process.env.AFMC_IMAGE_PUBLIC_BASE_URL ||
-  "https://afmc.globalsparkteksolutions.com/AFMCIMAGES"
+  "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST"
 ).replace(/\/+$/, "");
 
 const normalizeText = (value) => {
@@ -766,5 +766,4 @@ module.exports = {
   createCocktailItem,
   updateCocktailItem,
 };
-
 

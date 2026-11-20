@@ -10,7 +10,7 @@ const authMiddleware = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-router.get("/status", authMiddleware, getCurrentMessStatus);
+router.get("/status", getCurrentMessStatus);
 
 const adminOnly = (req, res, next) => {
   const roleId = Number(req.user?.ROLE_ID || req.user?.roleId || 0);

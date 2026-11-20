@@ -1,5 +1,6 @@
 const userModel = require("../models/userModel");
 const XLSX = require("xlsx");
+const { validatePassword } = require("../helpers/authHelper");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^\d{10}$/;
@@ -46,12 +47,9 @@ const validateCreatePayload = (payload) => {
 
   
 
-  if (payload.password.length < 6) {
-    return "Password must be at least 6 characters";
-  }
-
-  if (payload.password !== payload.confirmPassword) {
-    return "Password and confirm password must match";
+  const passwordError = validatePassword(payload.password, payload.confirmPassword);
+  if (passwordError) {
+    return passwordError;
   }
 
   if (!EMAIL_REGEX.test(payload.email)) {
@@ -297,12 +295,9 @@ const validateBulkRows = (rows) => {
       return;
     }
 
-    if (row.password !== row.confirmPassword) {
-      errors.push(`Row ${row.rowNumber}: password and confirm password must match`);
-    }
-
-    if (row.password.length < 6) {
-      errors.push(`Row ${row.rowNumber}: password must be at least 6 characters`);
+    const passwordError = validatePassword(row.password, row.confirmPassword);
+    if (passwordError) {
+      errors.push(`Row ${row.rowNumber}: ${passwordError}`);
     }
 
     if (!EMAIL_REGEX.test(row.email)) {
@@ -332,11 +327,10 @@ exports.getAllUsers = async (req, res) => {
       data: users,
     });
   } catch (error) {
-    console.error("Error while fetching users:", error);
+    console.error("Failed to fetch users");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch users",
-      error: error.message,
     });
   }
 };
@@ -358,11 +352,10 @@ exports.getUserById = async (req, res) => {
       data: user,
     });
   } catch (error) {
-    console.error("Error while fetching user details:", error);
+    console.error("Failed to fetch user details");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch user details",
-      error: error.message,
     });
   }
 };
@@ -377,11 +370,10 @@ exports.getRoleOptions = async (req, res) => {
       data: roles,
     });
   } catch (error) {
-    console.error("Error while fetching role options:", error);
+    console.error("Failed to fetch role options");
     return res.status(500).json({
       success: false,
       message: "Failed to fetch role options",
-      error: error.message,
     });
   }
 };
@@ -406,7 +398,7 @@ exports.createUser = async (req, res) => {
       password: payload.password,
       email: payload.email,
       phoneNumber: payload.phoneNumber,
-      createdBy: payload.createdBy || "SYSTEM",
+      createdBy: req.user?.username || req.user?.user_name || "SYSTEM",
     });
 
     return res.status(201).json({
@@ -415,7 +407,7 @@ exports.createUser = async (req, res) => {
       data: createdUser,
     });
   } catch (error) {
-    console.error("Error while creating user:", error);
+    console.error("Failed to create user");
 
     const statusCode =
       error.message === "Username or email already exists" ? 409 : 500;
@@ -424,9 +416,8 @@ exports.createUser = async (req, res) => {
       success: false,
       message:
         statusCode === 409
-          ? error.message
+          ? "Username or email already exists"
           : "Failed to create user",
-      error: error.message,
     });
   }
 };
@@ -467,7 +458,7 @@ exports.updateUser = async (req, res) => {
       data: updatedUser,
     });
   } catch (error) {
-    console.error("Error while updating user:", error);
+    console.error("Failed to update user");
 
     const statusCode =
       error.message === "User not found"
@@ -479,10 +470,11 @@ exports.updateUser = async (req, res) => {
     return res.status(statusCode).json({
       success: false,
       message:
-        statusCode === 404 || statusCode === 409
-          ? error.message
+        statusCode === 404
+          ? "User not found"
+          : statusCode === 409
+            ? "Email already exists"
           : "Failed to update user",
-      error: error.message,
     });
   }
 };
@@ -530,11 +522,10 @@ exports.bulkUploadUsers = async (req, res) => {
       data: result,
     });
   } catch (error) {
-    console.error("Error while bulk uploading users:", error);
+    console.error("Failed to bulk upload users");
     return res.status(500).json({
       success: false,
-      message: error.message || "Failed to bulk upload users",
-      error: error.message,
+      message: "Failed to bulk upload users",
     });
   }
 };

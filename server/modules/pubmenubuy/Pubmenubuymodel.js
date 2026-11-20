@@ -849,6 +849,32 @@ async function getCocktailStockStatusMap(connection, orderNumber, cocktailItemId
   return statusMap;
 }
 
+function reconcileFreeRowsWithCurrentOffers(items) {
+  const expectedFreeQtyByParentOrderLineId = new Map();
+  for (const row of items) {
+    const isFreeRow = Number(row.price || 0) === 0 && Number(row.subtotal || 0) === 0;
+    if (isFreeRow) continue;
+    const parentOrderLineKey = String(row.order_line_id ?? "").trim();
+    if (!parentOrderLineKey) continue;
+    const expected = Number(row.computed_free_item_quantity || 0);
+    expectedFreeQtyByParentOrderLineId.set(
+      parentOrderLineKey,
+      Number.isFinite(expected) ? Math.max(0, expected) : 0
+    );
+  }
+
+  return items.flatMap((row) => {
+    const isFreeRow = Number(row.price || 0) === 0 && Number(row.subtotal || 0) === 0;
+    if (!isFreeRow) return [row];
+    const parentOrderLineKey = String(row.barcode || "").trim();
+    if (!expectedFreeQtyByParentOrderLineId.has(parentOrderLineKey)) return [row];
+
+    const expected = expectedFreeQtyByParentOrderLineId.get(parentOrderLineKey);
+    if (expected <= 0) return [];
+    return [{ ...row, quantity: expected, parent_order_line_id: Number(parentOrderLineKey) || null }];
+  });
+}
+
 async function getOrderSummary(orderNumber) {
   // console.log(`[ORDER-SUMMARY] Getting summary for order ${orderNumber}`);
   
@@ -1126,26 +1152,7 @@ async function getOrderSummary(orderNumber) {
     };
   });
 
-  const expectedFreeQtyByParentOrderLineId = new Map();
-  for (const row of enrichedItems) {
-    const isFreeRow = Number(row.price || 0) === 0 && Number(row.subtotal || 0) === 0;
-    if (isFreeRow) continue;
-    const parentOrderLineKey = String(row.order_line_id ?? "").trim();
-    if (!parentOrderLineKey) continue;
-    const expected = Number(row.computed_free_item_quantity || 0);
-    if (!Number.isFinite(expected) || expected <= 0) continue;
-    expectedFreeQtyByParentOrderLineId.set(parentOrderLineKey, expected);
-  }
-
-  const reconciledItems = enrichedItems.map((row) => {
-    const isFreeRow = Number(row.price || 0) === 0 && Number(row.subtotal || 0) === 0;
-    if (!isFreeRow) return row;
-    const parentOrderLineKey = String(row.barcode || "").trim();
-    if (!parentOrderLineKey) return row;
-    const expected = expectedFreeQtyByParentOrderLineId.get(parentOrderLineKey);
-    if (!Number.isFinite(Number(expected))) return row;
-    return { ...row, quantity: Number(expected), parent_order_line_id: Number(parentOrderLineKey) || null };
-  });
+  const reconciledItems = reconcileFreeRowsWithCurrentOffers(enrichedItems);
 
   // console.log(`[ORDER-SUMMARY] Final order summary:`, {
   //   orderNumber: normalizedOrderNumber,
@@ -2531,6 +2538,7 @@ module.exports = {
   reserveInventoryQty,
   createOrder,
   getOrderSummary,
+  reconcileFreeRowsWithCurrentOffers,
   cancelOrder,
   updateOrderItemQuantity,
   deleteOrderItem,

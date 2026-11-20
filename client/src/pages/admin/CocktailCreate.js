@@ -317,13 +317,6 @@ export default function CocktailCreate() {
     []
   );
 
-  const ingredientDropdownOptions = useMemo(() => {
-    return ingredientOptions.map((opt) => ({
-      value: String(opt.ITEM_CODE ?? "").trim(),
-      label: `${String(opt.ITEM_CODE ?? "").trim()} - ${toInitCap(opt.ITEM_NAME)}`,
-    }));
-  }, [ingredientOptions]);
-
   const normalizeItemCode = (value) => String(value ?? "").trim();
 
   const getIngredientDropdownOptions = (currentRow) => {
