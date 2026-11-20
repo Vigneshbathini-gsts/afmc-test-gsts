@@ -395,11 +395,6 @@ exports.changePassword = async (req, res) => {
       });
     }
 
-    const passwordError = validatePassword(newPassword, confirmPassword);
-    if (passwordError) {
-      return res.status(400).json({ success: false, message: passwordError });
-    }
-
     // Prevent same password reuse
     const isSamePassword = (await comparePassword(newPassword, user.password)).valid;
 
