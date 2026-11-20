@@ -362,6 +362,11 @@ exports.changePassword = async (req, res) => {
       });
     }
 
+    const passwordError = validatePassword(newPassword, confirmPassword);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
+    }
+
     // Fetch user
     const [users] = await db.query(
       `SELECT user_id, password

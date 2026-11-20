@@ -43,6 +43,20 @@ const getDisplayMoney = (amount) =>
 const getPaymentItemAmounts = (item) => {
     const quantity = Number(item.QUANTITY ?? item.quantity ?? 0);
     const basePrice = Number(item.PRICE ?? item.price ?? 0);
+    const storedSubtotal = item.SUBTOTAL ?? item.subtotal;
+    const hasStoredSubtotal =
+        storedSubtotal !== null &&
+        storedSubtotal !== undefined &&
+        Number.isFinite(Number(storedSubtotal));
+    if (hasStoredSubtotal) {
+        const finalTotal = Number(storedSubtotal);
+        return {
+            quantity,
+            finalPrice: quantity > 0 ? finalTotal / quantity : 0,
+            finalTotal,
+        };
+    }
+
     const inventoryFlag = String(item.INVENTORY_FLAG ?? item.inventory_flag ?? "")
         .trim()
         .toUpperCase();

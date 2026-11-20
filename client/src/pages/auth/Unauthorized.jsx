@@ -12,7 +12,6 @@ export default function Unauthorized() {
       ? "You are not authorized to access this page. Please login with the correct account."
       : "Session is over. Please login again.";
 
-    // Keep it simple and explicit per request
     // eslint-disable-next-line no-alert
     alert(message);
     navigate("/login", { replace: true, state: { from: location.state?.from || location } });
