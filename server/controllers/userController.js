@@ -479,6 +479,57 @@ exports.updateUser = async (req, res) => {
   }
 };
 
+exports.resetUserPassword = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newPassword, confirmPassword } = req.body || {};
+
+    if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user id",
+      });
+    }
+
+    if (!newPassword || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password and confirm password are required",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password and confirm password do not match",
+      });
+    }
+
+    const passwordError = validatePassword(newPassword, confirmPassword);
+    if (passwordError) {
+      return res.status(400).json({
+        success: false,
+        message: passwordError,
+      });
+    }
+
+    await userModel.resetUserPassword(id, newPassword);
+
+    return res.status(200).json({
+      success: true,
+      message: "User password reset successfully",
+    });
+  } catch (error) {
+    console.error("Failed to reset user password");
+    const notFound = error.message === "User not found";
+
+    return res.status(notFound ? 404 : 500).json({
+      success: false,
+      message: notFound ? "User not found" : "Failed to reset user password",
+    });
+  }
+};
+
 exports.bulkUploadUsers = async (req, res) => {
   try {
     if (!req.file?.buffer) {

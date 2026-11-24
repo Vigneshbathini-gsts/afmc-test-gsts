@@ -405,6 +405,27 @@ const updateUser = async (
   }
 };
 
+const resetUserPassword = async (userId, password) => {
+  const hashedPassword = await hashPassword(password);
+  const [result] = await db.execute(
+    `
+      UPDATE xxafmc_users
+      SET
+        PASSWORD = ?,
+        RESET_TOKEN = NULL,
+        RESET_EXPIRY = NULL,
+        REQUIRED_PASSWORD_CHANGE = 'N'
+      WHERE USER_ID = ?
+        AND ROLE_ID NOT IN (50, 60, 70)
+    `,
+    [hashedPassword, userId]
+  );
+
+  if (!result.affectedRows) {
+    throw new Error("User not found");
+  }
+};
+
 const createBulkUsers = async ({ rows, createdBy }) => {
   const connection = await db.getConnection();
   const insertedUsers = [];
@@ -597,5 +618,6 @@ module.exports = {
   getRoleOptionsByLoginType,
   createUser,
   updateUser,
+  resetUserPassword,
   createBulkUsers,
 };

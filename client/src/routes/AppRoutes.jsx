@@ -28,6 +28,7 @@ import StockReports from "../pages/admin/StockReports";
 import TodayStockOutDetails from "../pages/admin/TodayStockOutDetails";
 import UserManagement from "../pages/admin/UserManagement";
 import UserEdit from "../pages/admin/UserEdit";
+import AdminUserPasswordReset from "../pages/admin/AdminUserPasswordReset";
 import Offers from "../pages/admin/Offers";
 import PriceUpdate from "../pages/admin/PriceUpdate";
 import ProfitManagement from "../pages/admin/ProfitManagement";
@@ -147,6 +148,7 @@ export default function AppRoutes() {
         <Route path="edit-item" element={<EditItem />} />
         <Route path="reports" element={<Reports />} />
         <Route path="users" element={<UserManagement />} />
+        <Route path="users/:id/reset-password" element={<AdminUserPasswordReset />} />
         <Route path="users/:id" element={<UserEdit />} />
         <Route path="offers" element={<Offers />} />
         <Route path="offers/create" element={<OfferCreate />} />

@@ -9,6 +9,7 @@ import {
   PlusCircle,
   Search,
   UploadCloud,
+  KeyRound,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { userAPI } from "../../services/api";
@@ -483,6 +484,7 @@ export default function UserManagement() {
                     Role
                   </th>
                   <th className="px-4 py-3 text-left font-medium">Login Type</th>
+                  <th className="px-1 py-3 text-center font-medium">Reset Password</th>
                 </tr>
               </thead>
 
@@ -541,6 +543,19 @@ export default function UserManagement() {
                                 .slice(1)
                                 .toLowerCase()}`
                             : "-"}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              navigate(`/admin/users/${user.USER_ID}/reset-password`)
+                            }
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-afmc-maroon transition hover:border-afmc-maroon/30 hover:bg-afmc-maroon/10 focus:outline-none focus:ring-2 focus:ring-afmc-maroon/30"
+                            aria-label={`Reset password for ${user.USER_NAME}`}
+                            title="Reset password"
+                          >
+                            <KeyRound size={17} strokeWidth={2.2} />
+                          </button>
                         </td>
                       </tr>
                     );

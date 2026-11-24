@@ -174,6 +174,8 @@ export const userAPI = {
       params: { loginType },
     }),
   create: (userData) => api.post("/users", userData),
+  resetPassword: (id, passwordData) =>
+    api.post(`/users/${id}/reset-password`, passwordData),
   bulkUpload: (formData) =>
     api.post("/users/bulk-upload", formData, {
       headers: { "Content-Type": "multipart/form-data" },
