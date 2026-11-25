@@ -17,6 +17,8 @@ router.get("/:id", userController.getUserById);
 router.post("/", userController.createUser);
 router.post("/:id/reset-password", userController.resetUserPassword);
 router.put("/:id", userController.updateUser);
+router.get("/departments/options", userController.getDepartmentOptions);
+router.get("/ranks/options", userController.getRankOptions);
 
 module.exports = router;
 

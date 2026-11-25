@@ -12,6 +12,8 @@ const BASE_USER_SELECT = `
     xu.First_name,
     xu.EMAIL,
     xu.PHONE_NUMBER,
+    xu.DEPARTMENT_ID,
+    xu.RANK_ID,
     xu.ATTRIBUTE1,
     CASE
       WHEN xu.attribute1 = 'A' THEN 'Active'
@@ -226,6 +228,40 @@ const resolveRoleDetails = async ({ loginType, roleId }) => {
   };
 };
 
+const validateUserOptionIds = async (
+  connection,
+  { departmentId, rankId },
+  { required = true } = {}
+) => {
+  if (departmentId == null) {
+    if (required) {
+      throw new Error("Department is required");
+    }
+  } else {
+    const [departments] = await connection.execute(
+      "SELECT DEPARTMENT_ID FROM xxafmc_departments WHERE DEPARTMENT_ID = ? LIMIT 1",
+      [departmentId]
+    );
+    if (!departments.length) {
+      throw new Error("Invalid department selected");
+    }
+  }
+
+  if (rankId == null) {
+    if (required) {
+      throw new Error("Rank is required");
+    }
+  } else {
+    const [ranks] = await connection.execute(
+      "SELECT RANK_ID FROM xxafmc_ranks WHERE RANK_ID = ? LIMIT 1",
+      [rankId]
+    );
+    if (!ranks.length) {
+      throw new Error("Invalid rank selected");
+    }
+  }
+};
+
 const createUser = async ({
   loginType,
   firstName,
@@ -234,6 +270,8 @@ const createUser = async ({
   password,
   email,
   phoneNumber,
+  departmentId,
+  rankId,
   createdBy,
 }) => {
   const normalizedLoginType =
@@ -253,6 +291,7 @@ const createUser = async ({
 
   try {
     await connection.beginTransaction();
+    await validateUserOptionIds(connection, { departmentId, rankId });
 
     const [existingUsers] = await connection.execute(
       `
@@ -292,9 +331,11 @@ const createUser = async ({
           CREATION_DATE,
           ATTRIBUTE1,
           REQUIRED_PASSWORD_CHANGE,
-          CONFIRM_PASSWORD
+          CONFIRM_PASSWORD,
+          DEPARTMENT_ID,
+          RANK_ID
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         nextUserId,
@@ -312,6 +353,8 @@ const createUser = async ({
         "A",
         "Y",
         hashedPassword,
+        departmentId,
+        rankId,
       ]
     );
 
@@ -328,7 +371,16 @@ const createUser = async ({
 
 const updateUser = async (
   userId,
-  { roleId, status, firstName, loginType, email, phoneNumber }
+  {
+    roleId,
+    status,
+    firstName,
+    loginType,
+    email,
+    phoneNumber,
+    departmentId,
+    rankId,
+  }
 ) => {
   const normalizedLoginType =
     String(loginType || "").trim().toUpperCase() === "NON MEMBER"
@@ -350,6 +402,11 @@ const updateUser = async (
 
   try {
     await connection.beginTransaction();
+    await validateUserOptionIds(
+      connection,
+      { departmentId, rankId },
+      { required: false }
+    );
 
     const [existingUsers] = await connection.execute(
       `
@@ -376,7 +433,9 @@ const updateUser = async (
           LOGIN_TYPE = ?,
           EMAIL = ?,
           PHONE_NUMBER = ?,
-          ROLE = ?
+          ROLE = ?,
+          DEPARTMENT_ID = ?,
+          RANK_ID = ?
         WHERE USER_ID = ?
       `,
       [
@@ -387,6 +446,8 @@ const updateUser = async (
         email,
         phoneNumber,
         roleDetails.ROLE,
+        departmentId,
+        rankId,
         userId,
       ]
     );
@@ -430,13 +491,54 @@ const createBulkUsers = async ({ rows, createdBy }) => {
   const connection = await db.getConnection();
   const insertedUsers = [];
   const skippedRows = [];
+  const normalizeOptionName = (value) => String(value || "").trim().toLowerCase();
 
   try {
     await connection.beginTransaction();
+    const [departmentRows] = await connection.execute(
+      "SELECT DEPARTMENT_ID, DEPARTMENT_NAME FROM xxafmc_departments WHERE IS_ACTIVE = 1"
+    );
+    const departmentIdsByName = new Map(
+      departmentRows.map((department) => [
+        normalizeOptionName(department.DEPARTMENT_NAME),
+        department.DEPARTMENT_ID,
+      ])
+    );
+    const [rankRows] = await connection.execute(
+      "SELECT RANK_ID, RANK_NAME FROM xxafmc_ranks WHERE IS_ACTIVE = 1"
+    );
+    const rankIdsByName = new Map(
+      rankRows.map((rank) => [
+        normalizeOptionName(rank.RANK_NAME),
+        rank.RANK_ID,
+      ])
+    );
 
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const rowNumber = index + 2;
+      const departmentId = row.departmentName
+        ? departmentIdsByName.get(normalizeOptionName(row.departmentName))
+        : null;
+      const rankId = row.rankName
+        ? rankIdsByName.get(normalizeOptionName(row.rankName))
+        : null;
+
+      if (row.departmentName && departmentId == null) {
+        skippedRows.push({
+          rowNumber,
+          reason: `Invalid department: ${row.departmentName}`,
+        });
+        continue;
+      }
+
+      if (row.rankName && rankId == null) {
+        skippedRows.push({
+          rowNumber,
+          reason: `Invalid rank: ${row.rankName}`,
+        });
+        continue;
+      }
 
       const [existingOfficerRows] = await connection.execute(
         `
@@ -563,9 +665,11 @@ const createBulkUsers = async ({ rows, createdBy }) => {
             EMAIL,
             PHONE_NUMBER,
             FIRST_NAME,
-            LAST_NAME
+            LAST_NAME,
+            DEPARTMENT_ID,
+            RANK_ID
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           nextUserRow?.nextUserId,
@@ -586,6 +690,8 @@ const createBulkUsers = async ({ rows, createdBy }) => {
           row.phoneNumber,
           row.firstName,
           row.lastName,
+          departmentId,
+          rankId,
         ]
       );
 
@@ -612,10 +718,35 @@ const createBulkUsers = async ({ rows, createdBy }) => {
   }
 };
 
+
+const getDepartmentOptions = async () => {
+  const [rows] = await db.execute(
+    `SELECT DEPARTMENT_ID, DEPARTMENT_NAME
+     FROM xxafmc_departments
+     WHERE IS_ACTIVE = 1
+     ORDER BY DEPARTMENT_NAME ASC`
+  );
+  return rows;
+};
+
+const getRankOptions = async () => {
+  const [rows] = await db.execute(
+    `SELECT RANK_ID, RANK_NAME
+     FROM xxafmc_ranks
+     WHERE IS_ACTIVE = 1
+     ORDER BY RANK_NAME ASC`
+  );
+
+  return rows;
+};
+
+
 module.exports = {
   getAllUsers,
   getUserById,
   getRoleOptionsByLoginType,
+  getDepartmentOptions,
+  getRankOptions,
   createUser,
   updateUser,
   resetUserPassword,

@@ -12,6 +12,8 @@ const INITIAL_FORM = {
   status: "Active",
   email: "",
   phoneNumber: "",
+  departmentId: "",
+  rankId: "",
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -54,8 +56,11 @@ export default function UserEdit() {
 
   const [formData, setFormData] = useState(INITIAL_FORM);
   const [roles, setRoles] = useState([]);
+  const [departmentOptions, setDepartmentOptions] = useState([]);
+  const [rankOptions, setRankOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingRoles, setLoadingRoles] = useState(false);
+  const [loadingOptions, setLoadingOptions] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -77,6 +82,8 @@ export default function UserEdit() {
           status: user?.status || "Active",
           email: user?.EMAIL || "",
           phoneNumber: user?.PHONE_NUMBER ? String(user.PHONE_NUMBER) : "",
+          departmentId: user?.DEPARTMENT_ID ? String(user.DEPARTMENT_ID) : "",
+          rankId: user?.RANK_ID ? String(user.RANK_ID) : "",
         });
       } catch (fetchError) {
         console.error("Failed to fetch user:", fetchError);
@@ -127,6 +134,27 @@ export default function UserEdit() {
     }
   }, [formData.loginType]);
 
+  useEffect(() => {
+    const loadDepartmentAndRankOptions = async () => {
+      try {
+        setLoadingOptions(true);
+        const [departmentResponse, rankResponse] = await Promise.all([
+          userAPI.getDepartmentOptions(),
+          userAPI.getRankOptions(),
+        ]);
+        setDepartmentOptions(departmentResponse.data?.data || []);
+        setRankOptions(rankResponse.data?.data || []);
+      } catch (fetchError) {
+        console.error("Failed to fetch department and rank options:", fetchError);
+        toast.error("Unable to load Department / Rank options.");
+      } finally {
+        setLoadingOptions(false);
+      }
+    };
+
+    loadDepartmentAndRankOptions();
+  }, []);
+
   const handleChange = (event) => {
     const { name, value } = event.target;
     const normalizedValue =
@@ -160,6 +188,10 @@ export default function UserEdit() {
         status: formData.status,
         email: formData.email.trim(),
         phoneNumber: formData.phoneNumber.trim(),
+        departmentId: formData.departmentId
+          ? Number(formData.departmentId)
+          : null,
+        rankId: formData.rankId ? Number(formData.rankId) : null,
       });
 
       const updatedUser = response.data?.data;
@@ -318,6 +350,61 @@ export default function UserEdit() {
                         {roles.map((role) => (
                           <option key={role.ROLE_ID} value={role.ROLE_ID}>
                             {role.ROLE_NAME}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="departmentId"
+                        className="mb-1.5 sm:mb-2 block text-xs sm:text-sm font-medium text-gray-700"
+                      >
+                        Department
+                      </label>
+                      <select
+                        id="departmentId"
+                        name="departmentId"
+                        value={formData.departmentId}
+                        onChange={handleChange}
+                        disabled={loadingOptions}
+                        className="w-full rounded-xl sm:rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <option value="">
+                          {loadingOptions ? "Loading departments..." : "Select Department"}
+                        </option>
+                        {departmentOptions.map((department) => (
+                          <option
+                            key={department.DEPARTMENT_ID}
+                            value={department.DEPARTMENT_ID}
+                          >
+                            {department.DEPARTMENT_NAME}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="rankId"
+                        className="mb-1.5 sm:mb-2 block text-xs sm:text-sm font-medium text-gray-700"
+                      >
+                        Rank
+                      </label>
+                      <select
+                        id="rankId"
+                        name="rankId"
+                        value={formData.rankId}
+                        onChange={handleChange}
+                        disabled={loadingOptions}
+                        className="w-full rounded-xl sm:rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <option value="">
+                          {loadingOptions ? "Loading ranks..." : "Select Rank"}
+                        </option>
+                        {rankOptions.map((rank) => (
+                          <option key={rank.RANK_ID} value={rank.RANK_ID}>
+                            {rank.RANK_NAME}
                           </option>
                         ))}
                       </select>

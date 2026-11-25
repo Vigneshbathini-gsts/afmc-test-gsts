@@ -42,7 +42,7 @@ export default function Actions({
         aria-expanded={isOpen}
         aria-controls="report-actions-menu"
         onClick={() => setIsOpen((open) => !open)}
-        className="inline-flex items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm transition hover:border-afmc-maroon/40 hover:text-afmc-maroon focus:outline-none focus:ring-2 focus:ring-afmc-maroon/30"
+        className="inline-flex h-12 items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm transition hover:border-afmc-maroon/40 hover:text-afmc-maroon focus:outline-none focus:ring-2 focus:ring-afmc-maroon/30"
       >
         Actions
         <ChevronDown size={16} className={isOpen ? "rotate-180" : ""} />

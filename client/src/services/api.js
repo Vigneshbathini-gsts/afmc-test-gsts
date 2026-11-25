@@ -182,6 +182,8 @@ export const userAPI = {
     }),
   update: (id, userData) => api.put(`/users/${id}`, userData),
   delete: (id) => api.delete(`/users/${id}`),
+  getDepartmentOptions: () => api.get("/users/departments/options"),
+  getRankOptions: () => api.get("/users/ranks/options"),
 };
 
 // ================================

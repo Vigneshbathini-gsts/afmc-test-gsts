@@ -17,7 +17,18 @@ const normalizeUserPayload = (payload = {}) => ({
   createdBy: String(payload.createdBy || "").trim(),
   roleId: payload.roleId,
   status: String(payload.status || "").trim(),
+  departmentId:
+    payload.departmentId == null || payload.departmentId === ""
+      ? null
+      : Number(payload.departmentId),
+  rankId:
+    payload.rankId == null || payload.rankId === ""
+      ? null
+      : Number(payload.rankId),
 });
+
+const isValidOptionId = (value) =>
+  Number.isInteger(value) && value > 0;
 
 const validateCreatePayload = (payload) => {
   if (
@@ -60,6 +71,20 @@ const validateCreatePayload = (payload) => {
     return "Phone number must be exactly 10 digits";
   }
 
+  if (payload.departmentId == null) {
+    return "Department is required";
+  }
+  if (!isValidOptionId(payload.departmentId)) {
+    return "Invalid department selected";
+  }
+
+  if (payload.rankId == null) {
+    return "Rank is required";
+  }
+  if (!isValidOptionId(payload.rankId)) {
+    return "Invalid rank selected";
+  }
+
   return null;
 };
 
@@ -97,6 +122,14 @@ const validateUpdatePayload = (payload) => {
 
   if (!PHONE_REGEX.test(payload.phoneNumber)) {
     return "Phone number must be exactly 10 digits";
+  }
+
+  if (payload.departmentId != null && !isValidOptionId(payload.departmentId)) {
+    return "Invalid department selected";
+  }
+
+  if (payload.rankId != null && !isValidOptionId(payload.rankId)) {
+    return "Invalid rank selected";
   }
 
   return null;
@@ -158,7 +191,7 @@ const parseHtmlTableRows = (htmlText) => {
   return tableRows;
 };
 
-const expectedBulkHeaders = [
+const legacyBulkHeaders = [
   "login type",
   "full name with rank",
   "first name",
@@ -170,29 +203,48 @@ const expectedBulkHeaders = [
   "phone number",
 ];
 
+const expectedBulkHeaders = [
+  ...legacyBulkHeaders,
+  "department",
+  "rank",
+];
+
+const isValidBulkHeaders = (headers) =>
+  [legacyBulkHeaders, expectedBulkHeaders].some(
+    (expected) =>
+      headers.length === expected.length &&
+      expected.every((header, index) => headers[index] === header)
+  );
+
 const validateBulkHeaders = (headers) => {
-  if (
-    headers.length !== expectedBulkHeaders.length ||
-    expectedBulkHeaders.some((header, index) => headers[index] !== header)
-  ) {
+  if (!isValidBulkHeaders(headers)) {
     throw new Error(
       "Invalid template. Please use the sample template for bulk upload"
     );
   }
 };
 
-const mapBulkRow = (columns, index) => ({
-  rowNumber: index + 2,
-  loginType: String(columns[0] || "").trim(),
-  fullName: String(columns[1] || "").trim(),
-  firstName: String(columns[2] || "").trim(),
-  lastName: String(columns[3] || "").trim(),
-  userName: String(columns[4] || "").trim(),
-  password: String(columns[5] || "").trim(),
-  confirmPassword: String(columns[6] || "").trim(),
-  email: String(columns[7] || "").trim(),
-  phoneNumber: String(columns[8] || "").replace(/\D/g, "").trim(),
-});
+const mapBulkRow = (columns, index, headers) => {
+  const getValue = (header) => {
+    const columnIndex = headers.indexOf(header);
+    return columnIndex === -1 ? "" : String(columns[columnIndex] || "").trim();
+  };
+
+  return {
+    rowNumber: index + 2,
+    loginType: getValue("login type"),
+    fullName: getValue("full name with rank"),
+    firstName: getValue("first name"),
+    lastName: getValue("last name"),
+    userName: getValue("user name"),
+    password: getValue("password"),
+    confirmPassword: getValue("confirm password"),
+    email: getValue("email"),
+    phoneNumber: getValue("phone number").replace(/\D/g, ""),
+    departmentName: getValue("department"),
+    rankName: getValue("rank"),
+  };
+};
 
 const parseBulkCsv = (buffer) => {
   if (buffer[0] === 0x50 && buffer[1] === 0x4b) {
@@ -209,9 +261,7 @@ const parseBulkCsv = (buffer) => {
       const normalizedRow = row.map((header) =>
         String(header || "").trim().toLowerCase()
       );
-      return expectedBulkHeaders.every(
-        (header, index) => normalizedRow[index] === header
-      );
+      return isValidBulkHeaders(normalizedRow);
     });
 
     if (headerIndex === -1 || tableRows.length <= headerIndex + 1) {
@@ -228,7 +278,7 @@ const parseBulkCsv = (buffer) => {
     return tableRows
       .slice(headerIndex + 1)
       .filter((row) => row.some((cell) => String(cell || "").trim()))
-      .map(mapBulkRow);
+      .map((row, index) => mapBulkRow(row, index, headers));
   }
 
   const csvText = buffer.toString("utf8").replace(/^\uFEFF/, "");
@@ -237,9 +287,7 @@ const parseBulkCsv = (buffer) => {
     const tableRows = parseHtmlTableRows(csvText);
     const headerIndex = tableRows.findIndex((row) => {
       const normalizedRow = row.map((header) => header.toLowerCase());
-      return expectedBulkHeaders.every(
-        (header, index) => normalizedRow[index] === header
-      );
+      return isValidBulkHeaders(normalizedRow);
     });
 
     if (headerIndex === -1 || tableRows.length <= headerIndex + 1) {
@@ -254,7 +302,7 @@ const parseBulkCsv = (buffer) => {
     return tableRows
       .slice(headerIndex + 1)
       .filter((row) => row.some((cell) => String(cell || "").trim()))
-      .map(mapBulkRow);
+      .map((row, index) => mapBulkRow(row, index, headers));
   }
 
   const lines = csvText
@@ -272,7 +320,7 @@ const parseBulkCsv = (buffer) => {
   return lines.slice(1).map((line, index) => {
     const columns = parseCsvLine(line);
 
-    return mapBulkRow(columns, index);
+    return mapBulkRow(columns, index, headers);
   });
 };
 
@@ -398,6 +446,8 @@ exports.createUser = async (req, res) => {
       password: payload.password,
       email: payload.email,
       phoneNumber: payload.phoneNumber,
+      departmentId: payload.departmentId,
+      rankId: payload.rankId,
       createdBy: req.user?.username || req.user?.user_name || "SYSTEM",
     });
 
@@ -407,16 +457,23 @@ exports.createUser = async (req, res) => {
       data: createdUser,
     });
   } catch (error) {
-    console.error("Failed to create user");
+    console.error("Failed to create user:", error);
 
     const statusCode =
-      error.message === "Username or email already exists" ? 409 : 500;
+      error.message === "Username or email already exists"
+        ? 409
+        : [
+            "Invalid department selected",
+            "Invalid rank selected",
+          ].includes(error.message)
+          ? 400
+          : 500;
 
     return res.status(statusCode).json({
       success: false,
       message:
-        statusCode === 409
-          ? "Username or email already exists"
+        statusCode === 409 || statusCode === 400
+          ? error.message
           : "Failed to create user",
     });
   }
@@ -450,6 +507,8 @@ exports.updateUser = async (req, res) => {
       loginType: payload.loginType,
       email: payload.email,
       phoneNumber: payload.phoneNumber,
+      departmentId: payload.departmentId,
+      rankId: payload.rankId,
     });
 
     return res.status(200).json({
@@ -458,14 +517,19 @@ exports.updateUser = async (req, res) => {
       data: updatedUser,
     });
   } catch (error) {
-    console.error("Failed to update user");
+    console.error("Failed to update user:", error);
 
     const statusCode =
       error.message === "User not found"
         ? 404
         : error.message === "Email already exists"
           ? 409
-          : 500;
+          : [
+              "Invalid department selected",
+              "Invalid rank selected",
+            ].includes(error.message)
+            ? 400
+            : 500;
 
     return res.status(statusCode).json({
       success: false,
@@ -474,6 +538,8 @@ exports.updateUser = async (req, res) => {
           ? "User not found"
           : statusCode === 409
             ? "Email already exists"
+            : statusCode === 400
+              ? error.message
           : "Failed to update user",
     });
   }
@@ -563,6 +629,8 @@ exports.bulkUploadUsers = async (req, res) => {
         password: row.password,
         email: row.email,
         phoneNumber: row.phoneNumber,
+        departmentName: row.departmentName,
+        rankName: row.rankName,
       })),
       createdBy,
     });
@@ -581,4 +649,37 @@ exports.bulkUploadUsers = async (req, res) => {
   }
 };
 
+
+exports.getDepartmentOptions = async (req, res) => {
+  try {
+    const departments = await userModel.getDepartmentOptions();
+    return res.status(200).json({
+      success: true,
+      data: departments,
+    });
+  } catch (error) {
+    console.error("Failed to fetch department options:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch department options",
+    });
+  }
+};
+
+exports.getRankOptions = async (req, res) => {
+  try {
+    const ranks = await userModel.getRankOptions();
+    return res.status(200).json({
+      success: true,
+      data: ranks,
+    });
+  }
+  catch (error) {
+    console.error("Failed to fetch rank options:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch rank options"
+    });
+  }
+};
 
