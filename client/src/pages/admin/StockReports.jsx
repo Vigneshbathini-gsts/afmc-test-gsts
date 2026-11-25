@@ -4,6 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { inventoryAPI } from "../../services/api";
 import { exportTableToPdf } from "../../utils/pdfExport";
 import { toInitCap } from "../../utils/textFormat";
+import Actions, { useActionColumns } from "../../components/common/Actions";
+import { exportTableToCsv } from "../../utils/csvExport";
 
 const toInputDate = (date) => {
   const d = date instanceof Date ? date : new Date(date);
@@ -32,9 +34,20 @@ const formatReportDate = (value) => {
 };
 
 const REPORT_PAGE_SIZE = 20;
+const STOCK_REPORT_COLUMNS = [
+  { key: "itemCode", label: "Item Code" },
+  { key: "itemName", label: "Item Name" },
+  { key: "date", label: "Creation Date" },
+  { key: "unit", label: "A/c Unit" },
+  { key: "stock", label: "Stock" },
+  { key: "totalPrice", label: "Total Price" },
+];
 
 export default function StockReports() {
   const navigate = useNavigate();
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const { actionColumns, isColumnVisible, toggleColumn } =
+    useActionColumns(STOCK_REPORT_COLUMNS);
   const [activeTab, setActiveTab] = useState("in");
   const [fromDate, setFromDate] = useState(toInputDate(new Date()));
   const [toDate, setToDate] = useState(toInputDate(new Date()));
@@ -60,28 +73,52 @@ export default function StockReports() {
     else setLoadingMore(true);
     setError("");
     try {
-      const response = await inventoryAPI.getStockInReport({
-        ...queryParams,
-        limit: REPORT_PAGE_SIZE,
-        offset: nextPage * REPORT_PAGE_SIZE,
-      });
-      const rows = response.data.data || [];
-      const summary = response.data.summary || { total_stock: 0, total_price: 0 };
+      let rows = [];
+      let summary = { total_stock: 0, total_price: 0 };
+      if (rowsPerPage === 0) {
+        let offsetPage = 0;
+        while (true) {
+          const response = await inventoryAPI.getStockInReport({
+            ...queryParams,
+            limit: REPORT_PAGE_SIZE,
+            offset: offsetPage * REPORT_PAGE_SIZE,
+          });
+          const chunk = response.data.data || [];
+          rows.push(...chunk);
+          if (offsetPage === 0) {
+            summary = response.data.summary || summary;
+          }
+          if (chunk.length < REPORT_PAGE_SIZE) break;
+          offsetPage += 1;
+        }
+      } else {
+        const response = await inventoryAPI.getStockInReport({
+          ...queryParams,
+          limit: rowsPerPage,
+          offset: nextPage * rowsPerPage,
+        });
+        rows = response.data.data || [];
+        summary = response.data.summary || summary;
+      }
+      if (!rows.length && nextPage > 0) {
+        setStockInHasMore(false);
+        return;
+      }
       setStockInRows((current) => (reset ? rows : [...current, ...rows]));
       setStockInSummary(summary);
-      setStockInPage(nextPage + 1);
-      setStockInHasMore(rows.length === REPORT_PAGE_SIZE);
+      setStockInPage(rowsPerPage === 0 ? 1 : nextPage + 1);
+      setStockInHasMore(rowsPerPage !== 0 && rows.length === rowsPerPage);
     } catch (err) {
       console.error("Failed to load stock-in report:", err);
       setError("Failed to load stock-in report.");
-      if (reset) setStockInRows([]);
-      setStockInHasMore(false);
+      if (reset && nextPage === 0) setStockInRows([]);
+      if (nextPage === 0) setStockInHasMore(false);
     } finally {
       requestInFlight.current = false;
       setLoading(false);
       setLoadingMore(false);
     }
-  }, []);
+  }, [rowsPerPage]);
 
   const fetchStockOut = useCallback(async (queryParams, { reset = true, nextPage = 0 } = {}) => {
     if (requestInFlight.current) return;
@@ -90,31 +127,55 @@ export default function StockReports() {
     else setLoadingMore(true);
     setError("");
     try {
-      const response = await inventoryAPI.getStockOutReport({
-        ...queryParams,
-        limit: REPORT_PAGE_SIZE,
-        offset: nextPage * REPORT_PAGE_SIZE,
-      });
-      const rows = response.data.data || [];
-      const summary = response.data.summary || { total_stock: 0, total_price: 0 };
+      let rows = [];
+      let summary = { total_stock: 0, total_price: 0 };
+      if (rowsPerPage === 0) {
+        let offsetPage = 0;
+        while (true) {
+          const response = await inventoryAPI.getStockOutReport({
+            ...queryParams,
+            limit: REPORT_PAGE_SIZE,
+            offset: offsetPage * REPORT_PAGE_SIZE,
+          });
+          const chunk = response.data.data || [];
+          rows.push(...chunk);
+          if (offsetPage === 0) {
+            summary = response.data.summary || summary;
+          }
+          if (chunk.length < REPORT_PAGE_SIZE) break;
+          offsetPage += 1;
+        }
+      } else {
+        const response = await inventoryAPI.getStockOutReport({
+          ...queryParams,
+          limit: rowsPerPage,
+          offset: nextPage * rowsPerPage,
+        });
+        rows = response.data.data || [];
+        summary = response.data.summary || summary;
+      }
+      if (!rows.length && nextPage > 0) {
+        setStockOutHasMore(false);
+        return;
+      }
       setStockOutRows((current) => (reset ? rows : [...current, ...rows]));
       setStockOutSummary(summary);
-      setStockOutPage(nextPage + 1);
-      setStockOutHasMore(rows.length === REPORT_PAGE_SIZE);
-      console.log("data stock reports",response.data)
+      setStockOutPage(rowsPerPage === 0 ? 1 : nextPage + 1);
+      setStockOutHasMore(rowsPerPage !== 0 && rows.length === rowsPerPage);
+      console.log("data stock reports", rows)
       console.log("summary",summary)
       
     } catch (err) {
       console.error("Failed to load stock-out report:", err);
       setError("Failed to load stock-out report.");
-      if (reset) setStockOutRows([]);
-      setStockOutHasMore(false);
+      if (reset && nextPage === 0) setStockOutRows([]);
+      if (nextPage === 0) setStockOutHasMore(false);
     } finally {
       requestInFlight.current = false;
       setLoading(false);
       setLoadingMore(false);
     }
-  }, []);
+  }, [rowsPerPage]);
 
   const handleSearch = useCallback(async () => {
     const queryParams = {
@@ -137,32 +198,21 @@ export default function StockReports() {
   const rows = activeTab === "in" ? stockInRows : stockOutRows;
   const hasMore = activeTab === "in" ? stockInHasMore : stockOutHasMore;
   const summary = activeTab === "in" ? stockInSummary : stockOutSummary;
+  const summaryLabelColumnCount = [
+    "itemCode",
+    "itemName",
+    "date",
+    "unit",
+  ].filter(isColumnVisible).length;
+  const hasVisibleSummaryValue =
+    isColumnVisible("stock") || isColumnVisible("totalPrice");
 
-  const handleReportScroll = (event) => {
-    const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
-    if (scrollTop + clientHeight < scrollHeight - 80 || loading || loadingMore || !hasMore) {
-      return;
-    }
-
-    const queryParams = {
-      fromDate: fromDate || undefined,
-      toDate: toDate || undefined,
-      search: searchTerm.trim() || undefined,
-    };
-
-    if (activeTab === "in") {
-      fetchStockIn(queryParams, { reset: false, nextPage: stockInPage });
-    } else {
-      fetchStockOut(queryParams, { reset: false, nextPage: stockOutPage });
-    }
-  };
-
-  const downloadPdf = async () => {
+  const fetchAllReportRows = async () => {
     if (!rows || rows.length === 0) return;
-
     const isStockIn = activeTab === "in";
     const reportRows = [];
     let offsetPage = 0;
+    const pageSize = rowsPerPage || REPORT_PAGE_SIZE;
     const queryParams = {
       fromDate: fromDate || undefined,
       toDate: toDate || undefined,
@@ -173,83 +223,106 @@ export default function StockReports() {
       const response = isStockIn
         ? await inventoryAPI.getStockInReport({
             ...queryParams,
-            limit: REPORT_PAGE_SIZE,
-            offset: offsetPage * REPORT_PAGE_SIZE,
+            limit: pageSize,
+            offset: offsetPage * pageSize,
           })
         : await inventoryAPI.getStockOutReport({
             ...queryParams,
-            limit: REPORT_PAGE_SIZE,
-            offset: offsetPage * REPORT_PAGE_SIZE,
+            limit: pageSize,
+            offset: offsetPage * pageSize,
           });
       const chunk = response.data.data || [];
       reportRows.push(...chunk);
-      if (chunk.length < REPORT_PAGE_SIZE) break;
+      if (chunk.length < pageSize) break;
       offsetPage += 1;
     }
 
-    const tableRows = reportRows.map((row) =>
-      isStockIn
-        ? [
-            row.item_code,
-            row.item_name,
-            // row.batch_id || "-",
-            formatReportDate(row.transaction_date || row.creation_date),
-            row.ac_unit || "Nos",
-            row.stock,
-            row.total_price ?? row.totalprice ?? 0,
-          ]
-        : [
-            row.item_code,
-            row.item_name,
-            formatReportDate(row.creation_date),
-            row.ac_unit || "Nos",
-            row.stock,
-            row.total_price ?? row.totalprice ?? 0,
-          ]
-    );
+    return { reportRows, isStockIn };
+  };
 
-    const totalStock = reportRows.reduce(
-      (sum, row) => sum + Number(row.stock || 0),
-      0
-    );
-    const totalPrice = reportRows.reduce(
-      (sum, row) => sum + Number(row.total_price ?? row.totalprice ?? 0),
-      0
-    );
+  const getExportColumns = () =>
+    STOCK_REPORT_COLUMNS.filter(({ key }) => isColumnVisible(key));
 
-    if (isStockIn) {
-      tableRows.push(["", "", "Totals", "", totalStock, totalPrice]);
-    } else {
-      tableRows.push(["", "", "Totals", "", totalStock, totalPrice]);
+  const getExportRow = (row) => ({
+    itemCode: row.item_code ?? "",
+    itemName: toInitCap(row.item_name),
+    date: formatReportDate(row.transaction_date || row.creation_date),
+    unit: row.ac_unit || "Nos",
+    stock: row.stock ?? 0,
+    totalPrice: row.total_price ?? row.totalprice ?? 0,
+  });
+
+  const downloadPdf = async () => {
+    try {
+      const result = await fetchAllReportRows();
+      if (!result) return;
+      const { reportRows, isStockIn } = result;
+      const columns = getExportColumns();
+      const exportRows = reportRows.map(getExportRow);
+
+      const totalStock = reportRows.reduce(
+        (sum, row) => sum + Number(row.stock || 0),
+        0
+      );
+      const totalPrice = reportRows.reduce(
+        (sum, row) => sum + Number(row.total_price ?? row.totalprice ?? 0),
+        0
+      );
+      exportRows.push({
+        itemCode: "",
+        itemName: "",
+        date: "Totals",
+        unit: "",
+        stock: totalStock,
+        totalPrice,
+      });
+
+      exportTableToPdf({
+        title: isStockIn ? "Stock In Report" : "Stock Out Report",
+        fileName: isStockIn ? "stock-in-report.pdf" : "stock-out-report.pdf",
+        subtitle: `From: ${formatReportDate(fromDate)}    To: ${formatReportDate(
+          toDate
+        )}`,
+        headers: columns.map(({ label }) => label),
+        rows: exportRows.map((row) => columns.map(({ key }) => row[key])),
+        orientation: "portrait",
+      });
+    } catch (exportError) {
+      console.error("Failed to export stock report PDF:", exportError);
+      setError("Failed to export stock report PDF.");
     }
+  };
 
-    exportTableToPdf({
-      title: isStockIn ? "Stock In Report" : "Stock Out Report",
-      fileName: isStockIn ? "stock-in-report.pdf" : "stock-out-report.pdf",
-      subtitle: `From: ${formatReportDate(fromDate)}    To: ${formatReportDate(
-        toDate
-      )}`,
-      headers: isStockIn
-        ? [
-            "Item Code",
-            "Item Name",
-            // "Batch ID",
-            "Transaction Date",
-            "A/c Unit",
-            "Stock",
-            "Total Price",
-          ]
-        : [
-            "Item Code",
-            "Item Name",
-            "Transaction Date",
-            "A/c Unit",
-            "Stock",
-            "Total Price",
-          ],
-      rows: tableRows,
-      orientation: "portrait",
-    });
+  const downloadCsv = async () => {
+    try {
+      const result = await fetchAllReportRows();
+      if (!result) return;
+      const columns = getExportColumns();
+      exportTableToCsv({
+        fileName: activeTab === "in" ? "stock-in-report.csv" : "stock-out-report.csv",
+        headers: columns.map(({ label }) => label),
+        rows: result.reportRows.map((row) => {
+          const values = getExportRow(row);
+          return columns.map(({ key }) => values[key]);
+        }),
+      });
+    } catch (exportError) {
+      console.error("Failed to export stock report CSV:", exportError);
+      setError("Failed to export stock report CSV.");
+    }
+  };
+
+  const handleReportPageChange = (nextPage) => {
+    const queryParams = {
+      fromDate: fromDate || undefined,
+      toDate: toDate || undefined,
+      search: searchTerm.trim() || undefined,
+    };
+    if (activeTab === "in") {
+      fetchStockIn(queryParams, { reset: true, nextPage });
+    } else {
+      fetchStockOut(queryParams, { reset: true, nextPage });
+    }
   };
 
   return (
@@ -332,11 +405,21 @@ export default function StockReports() {
               <button
                 type="button"
                 onClick={downloadPdf}
-                className="w-auto px-5 md:px-6 py-3 rounded-2xl bg-afmc-maroon hover:bg-afmc-maroon2 text-white font-semibold flex items-center justify-center gap-2 shadow hover:shadow-md transition"
+                disabled={!rows.length || loading}
+                className="mr-3 w-auto px-5 md:px-6 py-3 rounded-2xl bg-afmc-maroon hover:bg-afmc-maroon2 text-white font-semibold flex items-center justify-center gap-2 shadow hover:shadow-md transition disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <FaDownload />
                 Download PDF
               </button>
+              <Actions
+                columns={actionColumns}
+                onToggleColumn={toggleColumn}
+                rowsPerPage={rowsPerPage}
+                onRowsPerPageChange={setRowsPerPage}
+                onDownloadCsv={downloadCsv}
+                onDownloadPdf={downloadPdf}
+                loading={loading}
+              />
             </div>
           </div>
 
@@ -372,62 +455,78 @@ export default function StockReports() {
           )}
 
           <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-            <div className="max-h-[70vh] overflow-auto" onScroll={handleReportScroll}>
+            <div className="max-h-[70vh] overflow-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-gray-600">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium">Item Code</th>
-                  <th className="px-4 py-3 text-left font-medium">Item Name</th>
+                  {isColumnVisible("itemCode") && <th className="px-4 py-3 text-left font-medium">Item Code</th>}
+                  {isColumnVisible("itemName") && <th className="px-4 py-3 text-left font-medium">Item Name</th>}
                   {/* {activeTab === "in" && (
                     <th className="px-4 py-3 text-left font-medium">Batch ID</th>
                   )} */}
-                  <th className="px-4 py-3 text-left font-medium">
+                  {isColumnVisible("date") && <th className="px-4 py-3 text-left font-medium">
                     Creation  Date
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium">A/c Unit</th>
-                  <th className="px-4 py-3 text-left font-medium">Stock</th>
-                  <th className="px-4 py-3 text-left font-medium">Total Price</th>
+                  </th>}
+                  {isColumnVisible("unit") && <th className="px-4 py-3 text-left font-medium">A/c Unit</th>}
+                  {isColumnVisible("stock") && <th className="px-4 py-3 text-left font-medium">Stock</th>}
+                  {isColumnVisible("totalPrice") && <th className="px-4 py-3 text-left font-medium">Total Price</th>}
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                    <td colSpan={Math.max(1, actionColumns.filter(({ visible }) => visible).length)} className="px-4 py-6 text-center text-gray-500">
                       Loading report...
                     </td>
                   </tr>
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                    <td colSpan={Math.max(1, actionColumns.filter(({ visible }) => visible).length)} className="px-4 py-6 text-center text-gray-500">
                       No records found.
                     </td>
                   </tr>
                 ) : (
                   rows.map((row, idx) => (
                     <tr key={`${row.item_code}-${idx}`} className="border-t border-gray-100">
-                      <td className="px-4 py-3">{row.item_code}</td>
-                      <td className="px-4 py-3">{toInitCap(row.item_name)}</td>
+                      {isColumnVisible("itemCode") && <td className="px-4 py-3">{row.item_code}</td>}
+                      {isColumnVisible("itemName") && <td className="px-4 py-3">{toInitCap(row.item_name)}</td>}
                       {/* {activeTab === "in" && (
                         <td className="px-4 py-3">{row.batch_id || "-"}</td>
                       )} */}
-                      <td className="px-4 py-3">
+                      {isColumnVisible("date") && <td className="px-4 py-3">
                         {formatDisplayDate(row.transaction_date || row.creation_date)}
-                      </td>
-                      <td className="px-4 py-3">{row.ac_unit || "Nos"}</td>
-                      <td className="px-4 py-3">{row.stock}</td>
-                      <td className="px-4 py-3">
+                      </td>}
+                      {isColumnVisible("unit") && <td className="px-4 py-3">{row.ac_unit || "Nos"}</td>}
+                      {isColumnVisible("stock") && <td className="px-4 py-3">{row.stock}</td>}
+                      {isColumnVisible("totalPrice") && <td className="px-4 py-3">
                         {row.total_price ?? row.totalprice ?? 0}
-                      </td>
+                      </td>}
                     </tr>
                   ))
                 )}
                 {!loading && rows.length > 0 && (
                   <tr className="border-t border-gray-200 bg-gray-50 font-semibold">
-                    <td className="px-4 py-3" colSpan={4}>
-                      Totals
-                    </td>
-                    <td className="px-4 py-3">{summary.total_stock || 0}</td>
-                    <td className="px-4 py-3">{summary.total_price || 0}</td>
+                    {summaryLabelColumnCount > 0 ? (
+                      <td className="px-4 py-3" colSpan={summaryLabelColumnCount}>
+                        Totals
+                      </td>
+                    ) : !hasVisibleSummaryValue ? (
+                      <td className="px-4 py-3">Totals</td>
+                    ) : null}
+                    {isColumnVisible("stock") && (
+                      <td className="px-4 py-3">
+                        {summaryLabelColumnCount === 0
+                          ? `Totals: ${summary.total_stock || 0}`
+                          : summary.total_stock || 0}
+                      </td>
+                    )}
+                    {isColumnVisible("totalPrice") && (
+                      <td className="px-4 py-3">
+                        {summaryLabelColumnCount === 0 && !isColumnVisible("stock")
+                          ? `Totals: ${summary.total_price || 0}`
+                          : summary.total_price || 0}
+                      </td>
+                    )}
                   </tr>
                 )}
               </tbody>
@@ -437,10 +536,47 @@ export default function StockReports() {
                 Loading more report data...
               </p>
             )}
-            {!loading && !loadingMore && rows.length > 0 && !hasMore && (
+            {!loading && !loadingMore && rows.length > 0 && !hasMore && rowsPerPage !== 0 && (
               <p className="px-4 py-4 text-center text-gray-500">
                 No more data
               </p>
+            )}
+            {!loading && rows.length > 0 && (
+              <div className="flex items-center justify-between border-t border-gray-100 px-4 py-3 text-sm text-gray-600">
+                <span>
+                  {rowsPerPage === 0
+                    ? `${rows.length} records`
+                    : `Page ${activeTab === "in" ? stockInPage : stockOutPage}`}
+                </span>
+                {rowsPerPage !== 0 && (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={(activeTab === "in" ? stockInPage : stockOutPage) <= 1 || loading}
+                      onClick={() =>
+                        handleReportPageChange(
+                          (activeTab === "in" ? stockInPage : stockOutPage) - 2
+                        )
+                      }
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!hasMore || loading}
+                      onClick={() =>
+                        handleReportPageChange(
+                          activeTab === "in" ? stockInPage : stockOutPage
+                        )
+                      }
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
             </div>
           </div>

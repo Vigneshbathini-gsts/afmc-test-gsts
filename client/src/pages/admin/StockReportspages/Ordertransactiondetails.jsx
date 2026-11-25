@@ -7,6 +7,8 @@ import { exportTableToPdf } from "../../../utils/pdfExport";
 import FilterDropdown from "../../../components/common/FilterDropdown";
 import { useNavigate } from "react-router-dom";
 import { stripHtml, toInitCap } from "../../../utils/textFormat";
+import Actions, { useActionColumns } from "../../../components/common/Actions";
+import { exportTableToCsv } from "../../../utils/csvExport";
 
 const toInputDate = (date) => {
   const d = date instanceof Date ? date : new Date(date);
@@ -110,6 +112,18 @@ const normalizeDropdownOptions = (options) => {
 };
 
 const REPORT_PAGE_SIZE = 20;
+const TRANSACTION_TABLE_COLUMNS = [
+  { key: "orderNumber", label: "Order Number" },
+  { key: "user", label: "User" },
+  { key: "kitchen", label: "Kitchen" },
+  { key: "itemName", label: "Item Name" },
+  { key: "type", label: "Type" },
+  { key: "quantity", label: "Quantity" },
+  { key: "profitPercent", label: "Profit %" },
+  { key: "totalProfit", label: "Total Profit(Amount)" },
+  { key: "prepCharges", label: "Preparation Charges" },
+  { key: "subtotal", label: "Subtotal" },
+];
 
 /**
  * Multiple select dropdown with checkboxes.
@@ -342,6 +356,10 @@ function MultiSelectDropdown({
 
 export default function OrderTransactionUI() {
   const navigate = useNavigate();
+  const [rowsPerPage, setRowsPerPage] =
+    useState(10);
+  const { actionColumns, isColumnVisible, toggleColumn } =
+    useActionColumns(TRANSACTION_TABLE_COLUMNS);
 
   const today = useMemo(
     () => toInputDate(new Date()),
@@ -370,9 +388,6 @@ export default function OrderTransactionUI() {
     useState([]);
 
   const [loading, setLoading] =
-    useState(false);
-
-  const [loadingMore, setLoadingMore] =
     useState(false);
 
   const [error, setError] =
@@ -433,6 +448,26 @@ export default function OrderTransactionUI() {
       parseNumber(row.SUBTOTAL) === 0
     );
   };
+
+  const getTransactionExportValues = (row) => ({
+    orderNumber: row.ORDER_NUM || "-",
+    user: row.FIRST_NAME || "-",
+    kitchen: row.PUBMED_NAME || "-",
+    itemName: toInitCap(stripHtml(row.ITEM_NAME) || "-"),
+    type: row.TYPE || row.type || "NA",
+    quantity: row.QUANTITY || "-",
+    profitPercent: row.TOTALPERCENT || "0.00",
+    totalProfit: isFreeItem(row)
+      ? "Free Item"
+      : row.TOTAL_PROFIT || "0.00",
+    prepCharges: row.FOOD_PR_CHARGES || "0.00",
+    subtotal: row.SUBTOTAL || "0.00",
+  });
+
+  const selectedTransactionColumns =
+    TRANSACTION_TABLE_COLUMNS.filter(({ key }) =>
+      isColumnVisible(key)
+    );
 
   const handleChange = (event) => {
     const {
@@ -510,6 +545,7 @@ export default function OrderTransactionUI() {
     {
       reset = true,
       nextPage = 0,
+      pageSize = rowsPerPage,
     } = {}
   ) => {
     if (requestInFlight.current) {
@@ -518,35 +554,51 @@ export default function OrderTransactionUI() {
 
     requestInFlight.current = true;
 
-    if (reset) {
-      setLoading(true);
-    } else {
-      setLoadingMore(true);
-    }
+    setLoading(true);
 
     setError("");
 
     try {
-      const queryParams = {
-        ...buildQueryParams(
-          activeFilters
-        ),
-
-        limit: REPORT_PAGE_SIZE,
-
-        offset:
-          nextPage *
-          REPORT_PAGE_SIZE,
-      };
-
-      const {
-        data: response,
-      } = await api.get(
-        "/reports/ordertransaction",
-        {
-          params: queryParams,
+      let response;
+      if (pageSize === 0) {
+        const allRows = [];
+        let offsetPage = 0;
+        while (true) {
+          const { data: pageResponse } = await api.get(
+            "/reports/ordertransaction",
+            {
+              params: {
+                ...buildQueryParams(activeFilters),
+                limit: REPORT_PAGE_SIZE,
+                offset: offsetPage * REPORT_PAGE_SIZE,
+              },
+            }
+          );
+          if (!pageResponse.success) {
+            response = pageResponse;
+            break;
+          }
+          const responseRows = Array.isArray(pageResponse.data)
+            ? pageResponse.data
+            : [];
+          allRows.push(...responseRows);
+          response = { ...pageResponse, data: allRows };
+          if (responseRows.length < REPORT_PAGE_SIZE) break;
+          offsetPage += 1;
         }
-      );
+      } else {
+        const { data: pageResponse } = await api.get(
+          "/reports/ordertransaction",
+          {
+            params: {
+              ...buildQueryParams(activeFilters),
+              limit: pageSize,
+              offset: nextPage * pageSize,
+            },
+          }
+        );
+        response = pageResponse;
+      }
 
       if (response.success) {
         const responseRows =
@@ -561,6 +613,11 @@ export default function OrderTransactionUI() {
             (row) => row?.ORD !== 2
           );
 
+        if (!detailRows.length && nextPage > 0) {
+          setHasMore(false);
+          return;
+        }
+
         setData((current) =>
           reset
             ? detailRows
@@ -570,25 +627,20 @@ export default function OrderTransactionUI() {
               ]
         );
 
-        setPage(
-          nextPage + 1
-        );
+        setPage(pageSize === 0 ? 1 : nextPage + 1);
 
-        setHasMore(
-          detailRows.length ===
-            REPORT_PAGE_SIZE
-        );
+        setHasMore(pageSize !== 0 && detailRows.length === pageSize);
       } else {
         setError(
           response.message ||
             "Unable to fetch order transactions."
         );
 
-        if (reset) {
+        if (reset && nextPage === 0) {
           setData([]);
         }
 
-        setHasMore(false);
+        if (nextPage === 0) setHasMore(false);
       }
     } catch (requestError) {
       console.error(
@@ -602,17 +654,16 @@ export default function OrderTransactionUI() {
           "Unable to fetch order transactions. Please try again."
       );
 
-      if (reset) {
+      if (reset && nextPage === 0) {
         setData([]);
       }
 
-      setHasMore(false);
+      if (nextPage === 0) setHasMore(false);
     } finally {
       requestInFlight.current =
         false;
 
       setLoading(false);
-      setLoadingMore(false);
     }
   };
 
@@ -690,6 +741,7 @@ export default function OrderTransactionUI() {
 
     const exportRows = [];
     let offsetPage = 0;
+    const pageSize = rowsPerPage || REPORT_PAGE_SIZE;
 
     while (true) {
       const {
@@ -703,11 +755,11 @@ export default function OrderTransactionUI() {
             ),
 
             limit:
-              REPORT_PAGE_SIZE,
+              pageSize,
 
             offset:
               offsetPage *
-              REPORT_PAGE_SIZE,
+              pageSize,
           },
         }
       );
@@ -728,7 +780,7 @@ export default function OrderTransactionUI() {
 
       if (
         chunk.length <
-        REPORT_PAGE_SIZE
+        pageSize
       ) {
         break;
       }
@@ -908,81 +960,91 @@ export default function OrderTransactionUI() {
           " | "
         ),
 
-      headers: [
-        "Order Number",
-        "User",
-        "Kitchen",
-        "Item Name",
-        "Type",
-        "Quantity",
-        "Profit %",
-        "Total Profit(Amount)",
-        "Preparation Charges",
-        "Subtotal",
-      ],
+      headers: selectedTransactionColumns.map(({ label }) => label),
 
       rows: [
-        ...exportRows.map(
-          (row) => [
-            row.ORDER_NUM ||
-              "-",
-
-            row.FIRST_NAME ||
-              "-",
-
-            row.PUBMED_NAME ||
-              "-",
-
-            toInitCap(
-              stripHtml(
-                row.ITEM_NAME
-              ) || "-"
-            ),
-
-            row.TYPE ||
-              row.type ||
-              "NA",
-
-            row.QUANTITY ||
-              "-",
-
-            row.TOTALPERCENT ||
-              "0.00",
-
-            isFreeItem(row)
-              ? "Free Item"
-              : row.TOTAL_PROFIT ||
-                "0.00",
-
-            row.FOOD_PR_CHARGES ||
-              "0.00",
-
-            row.SUBTOTAL ||
-              "0.00",
-          ]
-        ),
-
-        // Total row
-        [
-          "",
-          "",
-          "",
-          "",
-          "",
-          "TOTAL",
-          "",
-          totals.totalProfit.toFixed(
-            2
-          ),
-          totals.prepCharges.toFixed(
-            2
-          ),
-          totals.subtotal.toFixed(
-            2
-          ),
-        ],
-      ],
+        ...exportRows.map(getTransactionExportValues),
+        {
+          orderNumber: "",
+          user: "",
+          kitchen: "",
+          itemName: "",
+          type: "",
+          quantity: "TOTAL",
+          profitPercent: "",
+          totalProfit: totals.totalProfit.toFixed(2),
+          prepCharges: totals.prepCharges.toFixed(2),
+          subtotal: totals.subtotal.toFixed(2),
+        },
+      ].map((row) =>
+        selectedTransactionColumns.map(({ key }) => row[key])
+      ),
     });
+  };
+
+  const exportCsv = async () => {
+    if (!data.length) return;
+
+    try {
+      const exportRows = [];
+      let offsetPage = 0;
+      const pageSize = rowsPerPage || REPORT_PAGE_SIZE;
+      while (true) {
+        const { data: response } = await api.get(
+          "/reports/ordertransaction",
+          {
+            params: {
+              ...buildQueryParams(appliedFilters),
+              limit: pageSize,
+              offset: offsetPage * pageSize,
+            },
+          }
+        );
+        const chunk = (
+          Array.isArray(response.data) ? response.data : []
+        ).filter((row) => row?.ORD !== 2);
+        exportRows.push(...chunk);
+        if (chunk.length < pageSize) break;
+        offsetPage += 1;
+      }
+
+      const totals = exportRows.reduce(
+        (acc, row) => ({
+          quantity: acc.quantity + parseNumber(row.QUANTITY),
+          totalProfit: acc.totalProfit + parseNumber(row.TOTAL_PROFIT),
+          prepCharges: acc.prepCharges + parseNumber(row.FOOD_PR_CHARGES),
+          subtotal: acc.subtotal + parseNumber(row.SUBTOTAL),
+        }),
+        { quantity: 0, totalProfit: 0, prepCharges: 0, subtotal: 0 }
+      );
+
+      exportTableToCsv({
+        fileName: `order-transaction-details-${new Date()
+          .toISOString()
+          .split("T")[0]}.csv`,
+        headers: selectedTransactionColumns.map(({ label }) => label),
+        rows: [
+          ...exportRows.map(getTransactionExportValues),
+          {
+            orderNumber: "",
+            user: "",
+            kitchen: "",
+            itemName: "",
+            type: "",
+            quantity: "TOTAL",
+            profitPercent: "",
+            totalProfit: totals.totalProfit.toFixed(2),
+            prepCharges: totals.prepCharges.toFixed(2),
+            subtotal: totals.subtotal.toFixed(2),
+          },
+        ].map((row) =>
+          selectedTransactionColumns.map(({ key }) => row[key])
+        ),
+      });
+    } catch (exportError) {
+      console.error("Failed to export order transaction CSV:", exportError);
+      setError("Unable to export order transactions as CSV.");
+    }
   };
 
   // ============================================================
@@ -1036,32 +1098,22 @@ export default function OrderTransactionUI() {
     return value.toFixed(2);
   };
 
-  // Infinite scroll
-  const handleTableScroll = (
-    event
-  ) => {
-    const {
-      scrollTop,
-      clientHeight,
-      scrollHeight,
-    } = event.currentTarget;
+  const handlePageChange = (nextPage) => {
+    fetchData(appliedFilters, {
+      reset: true,
+      nextPage,
+    });
+  };
 
-    if (
-      scrollTop +
-        clientHeight >=
-        scrollHeight - 80 &&
-      !loading &&
-      !loadingMore &&
-      hasMore
-    ) {
-      fetchData(
-        appliedFilters,
-        {
-          reset: false,
-          nextPage: page,
-        }
-      );
-    }
+  const handleRowsPerPageChange = (pageSize) => {
+    setRowsPerPage(pageSize);
+    setPage(0);
+    setHasMore(true);
+    fetchData(appliedFilters, {
+      reset: true,
+      nextPage: 0,
+      pageSize,
+    });
   };
 
   return (
@@ -1298,21 +1350,23 @@ export default function OrderTransactionUI() {
                 : "Search"}
             </button>
 
+            <Actions
+              columns={actionColumns}
+              onToggleColumn={toggleColumn}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={handleRowsPerPageChange}
+              onDownloadCsv={exportCsv}
+              onDownloadPdf={exportPdf}
+              busy={loading || !data.length}
+              loading={loading}
+            />
             <button
               type="button"
               className="px-6 py-3 rounded-2xl bg-afmc-maroon hover:bg-afmc-maroon2 text-white font-semibold flex items-center gap-2 shadow hover:shadow-md transition disabled:opacity-60 disabled:cursor-not-allowed"
-              onClick={
-                exportPdf
-              }
-              disabled={
-                !data.length ||
-                loading
-              }
+              onClick={exportPdf}
+              disabled={!data.length || loading}
             >
-              <FaDownload
-                size={16}
-              />
-
+              <FaDownload size={16} />
               Download PDF
             </button>
           </div>
@@ -1338,43 +1392,50 @@ export default function OrderTransactionUI() {
             </div>
           ) : (
             <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-              <div
-                className="max-h-[70vh] overflow-auto"
-                onScroll={
-                  handleTableScroll
-                }
-              >
+              <div className="max-h-[70vh] overflow-auto">
                 <div className="overflow-x-auto">
                   <table className="min-w-[720px] w-full text-sm">
                     <thead className="bg-gray-50 text-gray-600">
                       <tr>
-                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                        {isColumnVisible("orderNumber") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                           Order Number
-                        </th>
+                        </th>}
 
-                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                        {isColumnVisible("user") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                          User
+                        </th>}
+
+                        {isColumnVisible("kitchen") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                          Kitchen
+                        </th>}
+
+                        {isColumnVisible("itemName") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                           Item Name
-                        </th>
+                        </th>}
 
-                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                        {isColumnVisible("type") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                           Type
-                        </th>
+                        </th>}
 
-                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                        {isColumnVisible("quantity") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                           Quantity
-                        </th>
+                        </th>}
 
-                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                        {isColumnVisible("profitPercent") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                          Profit %
+                        </th>}
+
+                        {isColumnVisible("totalProfit") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                           Total Profit(Amount)
-                        </th>
+                        </th>}
 
-                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                        {isColumnVisible("prepCharges") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                           Preparation Charges
-                        </th>
+                        </th>}
 
-                        <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                        {isColumnVisible("subtotal") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                           Subtotal
-                        </th>
+                        </th>}
                       </tr>
                     </thead>
 
@@ -1382,7 +1443,7 @@ export default function OrderTransactionUI() {
                       {loading ? (
                         <tr>
                           <td
-                            colSpan="7"
+                            colSpan={TRANSACTION_TABLE_COLUMNS.filter(({ key }) => isColumnVisible(key)).length}
                             className="text-center py-8"
                           >
                             <div className="flex justify-center items-center">
@@ -1399,7 +1460,7 @@ export default function OrderTransactionUI() {
                         0 ? (
                         <tr>
                           <td
-                            colSpan="7"
+                            colSpan={TRANSACTION_TABLE_COLUMNS.filter(({ key }) => isColumnVisible(key)).length}
                             className="px-4 py-6 text-center text-gray-500"
                           >
                             No records
@@ -1422,32 +1483,44 @@ export default function OrderTransactionUI() {
                                 }
                                 className="border-t border-gray-100 hover:bg-gray-50"
                               >
-                                <td className="px-4 py-3 whitespace-nowrap">
+                                {isColumnVisible("orderNumber") && <td className="px-4 py-3 whitespace-nowrap">
                                   {row.ORDER_NUM ||
                                     "-"}
-                                </td>
+                                </td>}
 
-                                <td className="px-4 py-3 whitespace-nowrap">
+                                {isColumnVisible("user") && <td className="px-4 py-3 whitespace-nowrap">
+                                  {row.FIRST_NAME || "-"}
+                                </td>}
+
+                                {isColumnVisible("kitchen") && <td className="px-4 py-3 whitespace-nowrap">
+                                  {row.PUBMED_NAME || "-"}
+                                </td>}
+
+                                {isColumnVisible("itemName") && <td className="px-4 py-3 whitespace-nowrap">
                                   {toInitCap(
                                     stripHtml(
                                       row.ITEM_NAME ||
                                         "-"
                                     )
                                   )}
-                                </td>
+                                </td>}
 
-                                <td className="px-4 py-3 whitespace-nowrap">
+                                {isColumnVisible("type") && <td className="px-4 py-3 whitespace-nowrap">
                                   {row.TYPE ||
                                     row.type ||
                                     "NA"}
-                                </td>
+                                </td>}
 
-                                <td className="px-4 py-3 whitespace-nowrap">
+                                {isColumnVisible("quantity") && <td className="px-4 py-3 whitespace-nowrap">
                                   {row.QUANTITY ||
                                     "-"}
-                                </td>
+                                </td>}
 
-                                <td className="px-4 py-3 whitespace-nowrap">
+                                {isColumnVisible("profitPercent") && <td className="px-4 py-3 whitespace-nowrap">
+                                  {row.TOTALPERCENT || "0.00"}
+                                </td>}
+
+                                {isColumnVisible("totalProfit") && <td className="px-4 py-3 whitespace-nowrap">
                                   {isFreeItem(
                                     row
                                   ) ? (
@@ -1458,50 +1531,56 @@ export default function OrderTransactionUI() {
                                     row.TOTAL_PROFIT ||
                                     "0.00"
                                   )}
-                                </td>
+                                </td>}
 
-                                <td className="px-4 py-3 whitespace-nowrap">
+                                {isColumnVisible("prepCharges") && <td className="px-4 py-3 whitespace-nowrap">
                                   {row.FOOD_PR_CHARGES ||
                                     "0.00"}
-                                </td>
+                                </td>}
 
-                                <td className="px-4 py-3 whitespace-nowrap">
+                                {isColumnVisible("subtotal") && <td className="px-4 py-3 whitespace-nowrap">
                                   {row.SUBTOTAL ||
                                     "0.00"}
-                                </td>
+                                </td>}
                               </tr>
                             )
                           )}
 
                           {/* Total row */}
                           <tr className="border-t border-gray-200 bg-gray-100 font-semibold">
-                            <td className="px-4 py-3 whitespace-nowrap" />
+                            {isColumnVisible("orderNumber") && <td className="px-4 py-3 whitespace-nowrap" />}
 
-                            <td className="px-4 py-3 whitespace-nowrap">
+                            {isColumnVisible("user") && <td className="px-4 py-3 whitespace-nowrap" />}
+
+                            {isColumnVisible("kitchen") && <td className="px-4 py-3 whitespace-nowrap" />}
+
+                            {isColumnVisible("itemName") && <td className="px-4 py-3 whitespace-nowrap">
                               TOTAL
-                            </td>
+                            </td>}
 
-                            <td className="px-4 py-3 whitespace-nowrap" />
+                            {isColumnVisible("type") && <td className="px-4 py-3 whitespace-nowrap" />}
 
-                            <td className="px-4 py-3 whitespace-nowrap" />
+                            {isColumnVisible("quantity") && <td className="px-4 py-3 whitespace-nowrap" />}
 
-                            <td className="px-4 py-3 whitespace-nowrap">
+                            {isColumnVisible("profitPercent") && <td className="px-4 py-3 whitespace-nowrap" />}
+
+                            {isColumnVisible("totalProfit") && <td className="px-4 py-3 whitespace-nowrap">
                               {formatMoney(
                                 totals.totalProfit
                               )}
-                            </td>
+                            </td>}
 
-                            <td className="px-4 py-3 whitespace-nowrap">
+                            {isColumnVisible("prepCharges") && <td className="px-4 py-3 whitespace-nowrap">
                               {formatMoney(
                                 totals.prepCharges
                               )}
-                            </td>
+                            </td>}
 
-                            <td className="px-4 py-3 whitespace-nowrap">
+                            {isColumnVisible("subtotal") && <td className="px-4 py-3 whitespace-nowrap">
                               {formatMoney(
                                 totals.subtotal
                               )}
-                            </td>
+                            </td>}
                           </tr>
                         </>
                       )}
@@ -1509,28 +1588,34 @@ export default function OrderTransactionUI() {
                   </table>
                 </div>
 
-                {loadingMore && (
-                  <p className="px-4 py-4 text-center text-gray-500">
-                    Loading more
-                    data...
-                  </p>
-                )}
-
-                {!loading &&
-                  !loadingMore &&
-                  data.length > 0 &&
-                  !hasMore && (
-                    <p className="px-4 py-4 text-center text-gray-500">
-                      No more data
-                    </p>
-                  )}
               </div>
 
               {!loading &&
                 data.length > 0 && (
-                  <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-                    Total Records:{" "}
-                    {data.length}
+                  <div className="flex items-center justify-between gap-3 px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
+                    <span>
+                      {rowsPerPage === 0
+                        ? `${data.length} rows`
+                        : `Page ${page} · ${data.length} rows on this page`}
+                    </span>
+                    {rowsPerPage !== 0 && <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={page <= 1 || loading}
+                        onClick={() => handlePageChange(page - 2)}
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!hasMore || loading}
+                        onClick={() => handlePageChange(page)}
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>}
                   </div>
                 )}
             </div>

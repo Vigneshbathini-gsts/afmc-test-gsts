@@ -6,10 +6,19 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import AddStockModal from "./AddStockModal";
 import { FiCheckCircle, FiX } from "react-icons/fi";
+import Actions, { useActionColumns } from "../../components/common/Actions";
+import { exportTableToPdf } from "../../utils/pdfExport";
+import { exportTableToCsv } from "../../utils/csvExport";
 
 
 const INVENTORY_PAGE_SIZE = 20;
 const INVENTORY_IMAGE_BASE_URL = "https://afmc.globalsparkteksolutions.com/AFMCMESSTEST/";
+const INVENTORY_COLUMNS = [
+  { key: "itemName", label: "Item Name" },
+  { key: "unit", label: "A/C Unit" },
+  { key: "stock", label: "Stock" },
+  { key: "status", label: "Status" },
+];
 
 const JPG_IMAGE_ERROR = "Only JPG image files are allowed.";
 const isJpgImageFile = (file) => {
@@ -64,10 +73,47 @@ const getAllowedAcUnits = (categoryId, subCategoryId) => {
   return Array.from(allowed);
 };
 
+const groupInventoryRows = (sourceRows) => {
+  const groupedByItemCode = new Map();
+  sourceRows
+    .map((row) => ({
+      ...row,
+      status: row.status?.toLowerCase() || "active",
+    }))
+    .filter((row) => row?.sub_category == null || ![14, 15].includes(Number(row.sub_category)))
+    .forEach((row) => {
+      const key = String(row?.item_code || row?.item_id || "").trim();
+      if (!key) return;
+
+      if (!groupedByItemCode.has(key)) {
+        groupedByItemCode.set(key, { ...row });
+        return;
+      }
+
+      const existing = groupedByItemCode.get(key);
+      const existingQty = Number(existing?.stock_quantity || 0);
+      const nextQty = Number(row?.stock_quantity || 0);
+      groupedByItemCode.set(key, {
+        ...existing,
+        stock_quantity:
+          (Number.isFinite(existingQty) ? existingQty : 0) +
+          (Number.isFinite(nextQty) ? nextQty : 0),
+        file_name: existing?.file_name || row?.file_name || "",
+        status: existing?.status || row?.status || "active",
+      });
+    });
+
+  return Array.from(groupedByItemCode.values());
+};
+
 
 export default function Inventory() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+  const { actionColumns, isColumnVisible, toggleColumn } =
+    useActionColumns(INVENTORY_COLUMNS);
 
   const currentLoggedInUser = useMemo(() => {
     if (user) {
@@ -97,7 +143,6 @@ export default function Inventory() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState("");
   const [addItemError, setAddItemError] = useState("");
@@ -137,6 +182,9 @@ export default function Inventory() {
   const acUnitDropdownRef = useRef(null);
   const searchRef = useRef("");
   const requestInFlightRef = useRef(false);
+  const inventoryRowsRef = useRef([]);
+  const hasMoreRef = useRef(true);
+  const pageRef = useRef(0);
 
   const fetchCategories = async () => {
     try {
@@ -173,7 +221,7 @@ export default function Inventory() {
     if (requestInFlightRef.current) return;
 
     const reset = options.reset !== false;
-    const nextPage = reset ? 0 : options.nextPage ?? 0;
+    const nextPage = options.nextPage ?? 0;
 
     requestInFlightRef.current = true;
     if (reset) {
@@ -187,69 +235,57 @@ export default function Inventory() {
         categoryId: (options.categoryId ?? categoryId) || undefined,
         itemCode: (options.itemCode ?? itemCode) || undefined,
         q: (options.search ?? searchRef.current) || undefined,
-        limit: INVENTORY_PAGE_SIZE,
-        offset: nextPage * INVENTORY_PAGE_SIZE,
       };
-      const response = await inventoryAPI.getAll(params);
-      const rows = response.data.data || [];
-      
-      // Normalize status to lowercase for consistent UI handling
-      const normalizedRows = rows.map(row => ({
-        ...row,
-        status: row.status?.toLowerCase() || "active"
-      }));
-      
-      const cleanedRows = normalizedRows.filter((row) => {
-        if (row?.sub_category == null) return true;
-        return ![14, 15].includes(Number(row.sub_category));
-      });
-
-      const groupRows = (sourceRows) => {
-        const groupedByItemCode = new Map();
-        sourceRows.forEach((row) => {
-          const key = String(row?.item_code || row?.item_id || "").trim();
-          if (!key) return;
-
-          if (!groupedByItemCode.has(key)) {
-            groupedByItemCode.set(key, { ...row });
-            return;
-          }
-
-          const existing = groupedByItemCode.get(key);
-          const existingQty = Number(existing?.stock_quantity || 0);
-          const nextQty = Number(row?.stock_quantity || 0);
-          groupedByItemCode.set(key, {
-            ...existing,
-            stock_quantity: (Number.isFinite(existingQty) ? existingQty : 0) + (Number.isFinite(nextQty) ? nextQty : 0),
-            file_name: existing?.file_name || row?.file_name || "",
-            status: existing?.status || row?.status || "active",
+      let rows;
+      if (rowsPerPage === 0) {
+        rows = [];
+        let offsetPage = 0;
+        while (true) {
+          const response = await inventoryAPI.getAll({
+            ...params,
+            limit: INVENTORY_PAGE_SIZE,
+            offset: offsetPage * INVENTORY_PAGE_SIZE,
           });
-        });
-
-        return Array.from(groupedByItemCode.values());
-      };
-
-      if (reset) {
-        setInventory(groupRows(cleanedRows));
-        setPage(1);
+          const chunk = response.data.data || [];
+          rows.push(...chunk);
+          if (chunk.length < INVENTORY_PAGE_SIZE) break;
+          offsetPage += 1;
+        }
       } else {
-        setInventory((current) => groupRows([...current, ...cleanedRows]));
-        setPage(nextPage + 1);
+        const response = await inventoryAPI.getAll({
+          ...params,
+          limit: rowsPerPage,
+          offset: nextPage * rowsPerPage,
+        });
+        rows = response.data.data || [];
       }
-      setHasMore(rows.length === INVENTORY_PAGE_SIZE);
+      const nextRows = reset
+        ? groupInventoryRows(rows)
+        : groupInventoryRows([...inventoryRowsRef.current, ...rows]);
+      const nextHasMore = rowsPerPage !== 0 && rows.length === rowsPerPage;
+      inventoryRowsRef.current = nextRows;
+      hasMoreRef.current = nextHasMore;
+      pageRef.current = nextPage + 1;
+      setInventory(nextRows);
+      setHasMore(nextHasMore);
+      if (reset) setCurrentPage(1);
+      return { count: nextRows.length, hasMore: nextHasMore };
     } catch (err) {
       console.error("Failed to load inventory:", err);
       setError("Failed to load inventory.");
       if (reset) {
+        inventoryRowsRef.current = [];
+        hasMoreRef.current = false;
         setInventory([]);
       }
       setHasMore(false);
+      return null;
     } finally {
       requestInFlightRef.current = false;
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [categoryId, itemCode]);
+  }, [categoryId, itemCode, rowsPerPage]);
 
   useEffect(() => {
     fetchCategories();
@@ -276,16 +312,31 @@ export default function Inventory() {
     searchRef.current = search;
   }, [search]);
 
-  const handleInventoryScroll = (event) => {
-    const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
+  const currentInventory = rowsPerPage === 0
+    ? inventory
+    : inventory.slice(
+        (currentPage - 1) * rowsPerPage,
+        currentPage * rowsPerPage
+      );
 
-    if (
-      scrollTop + clientHeight >= scrollHeight - 80 &&
-      !loading &&
-      !loadingMore &&
-      hasMore
-    ) {
-      fetchInventory({ reset: false, nextPage: page });
+  const handleInventoryNextPage = async () => {
+    const nextPageNumber = currentPage + 1;
+    const requiredRows = nextPageNumber * rowsPerPage;
+    let result = {
+      count: inventoryRowsRef.current.length,
+      hasMore: hasMoreRef.current,
+    };
+
+    while (result.count < requiredRows && result.hasMore) {
+      result = await fetchInventory({
+        reset: false,
+        nextPage: pageRef.current,
+      });
+      if (!result) return;
+    }
+
+    if (inventoryRowsRef.current.length > currentPage * rowsPerPage) {
+      setCurrentPage(nextPageNumber);
     }
   };
 
@@ -635,18 +686,81 @@ export default function Inventory() {
       await inventoryAPI.updateItemStatus(row.item_code, apiStatus);
 
       // Update state with lowercase status for consistency
-      setInventory(prevInventory =>
-        prevInventory.map(item =>
+      setInventory((prevInventory) => {
+        const nextInventory = prevInventory.map((item) =>
           item.item_code === row.item_code
             ? { ...item, status: newStatus }
             : item
-        )
-      );
+        );
+        inventoryRowsRef.current = nextInventory;
+        return nextInventory;
+      });
 
       toast.success(`Item status updated to ${newStatus}`);
     } catch (error) {
       console.error("Failed to update status:", error);
       toast.error("Failed to update item status");
+    }
+  };
+
+  const fetchAllInventoryRows = async () => {
+    const allRows = [];
+    let offsetPage = 0;
+    while (true) {
+      const response = await inventoryAPI.getAll({
+        categoryId: categoryId || undefined,
+        itemCode: itemCode || undefined,
+        q: search || undefined,
+        limit: rowsPerPage || INVENTORY_PAGE_SIZE,
+        offset: offsetPage * (rowsPerPage || INVENTORY_PAGE_SIZE),
+      });
+      const chunk = response.data.data || [];
+      allRows.push(...chunk);
+      if (chunk.length < (rowsPerPage || INVENTORY_PAGE_SIZE)) break;
+      offsetPage += 1;
+    }
+    return groupInventoryRows(allRows);
+  };
+
+  const getInventoryExportColumns = () =>
+    INVENTORY_COLUMNS.filter(({ key }) => isColumnVisible(key));
+
+  const getInventoryExportRow = (row) => ({
+    itemName: toInitCap(row.item_name),
+    unit: row.ac_unit || "-",
+    stock: row.stock_quantity ?? 0,
+    status: toInitCap(row.status || "active"),
+  });
+
+  const downloadInventory = async (format) => {
+    try {
+      const allRows = await fetchAllInventoryRows();
+      if (!allRows.length) {
+        toast.info("No inventory records to download.");
+        return;
+      }
+
+      const columns = getInventoryExportColumns();
+      const headers = columns.map(({ label }) => label);
+      const rows = allRows.map((row) => {
+        const values = getInventoryExportRow(row);
+        return columns.map(({ key }) => values[key]);
+      });
+      const fileName = `inventory-report.${format}`;
+
+      if (format === "csv") {
+        exportTableToCsv({ fileName, headers, rows });
+      } else {
+        exportTableToPdf({
+          title: "Inventory Management",
+          fileName,
+          headers,
+          rows,
+        });
+      }
+    } catch (exportError) {
+      console.error("Failed to export inventory:", exportError);
+      toast.error("Failed to export inventory.");
     }
   };
 
@@ -857,7 +971,19 @@ export default function Inventory() {
               </div>
             </div>
 
-            <div className="col-span-2 flex justify-end lg:col-span-1">
+            <div className="col-span-2 flex flex-wrap justify-end gap-3 lg:col-span-1">
+              <Actions
+                columns={actionColumns}
+                onToggleColumn={toggleColumn}
+                rowsPerPage={rowsPerPage}
+                onRowsPerPageChange={(value) => {
+                  setRowsPerPage(value);
+                  setCurrentPage(1);
+                }}
+                onDownloadCsv={() => downloadInventory("csv")}
+                onDownloadPdf={() => downloadInventory("pdf")}
+                loading={loading || loadingMore}
+              />
               <button
                 type="button"
                 onClick={openAddModal}
@@ -891,33 +1017,33 @@ export default function Inventory() {
             )}
 
             <div className="overflow-hidden rounded-2xl border border-afmc-gold/25 bg-white">
-              <div className="max-h-[70vh] overflow-x-auto overflow-y-auto" onScroll={handleInventoryScroll}>
+              <div className="max-h-[70vh] overflow-x-auto overflow-y-auto">
                 <table className="w-full min-w-[720px] text-sm table-auto">
                   <thead className="bg-afmc-maroon/5 text-afmc-maroon">
                     <tr>
                       <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Add Stock</th>
                       <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Update Image</th>
-                      <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Item Name</th>
-                      <th className="px-3 py-3 text-left font-medium whitespace-nowrap">A/C Unit</th>
-                      <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Stock</th>
-                      <th className="px-10 py-3 text-left font-medium whitespace-nowrap">Status</th>
+                    {isColumnVisible("itemName") && <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Item Name</th>}
+                    {isColumnVisible("unit") && <th className="px-3 py-3 text-left font-medium whitespace-nowrap">A/C Unit</th>}
+                    {isColumnVisible("stock") && <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Stock</th>}
+                    {isColumnVisible("status") && <th className="px-10 py-3 text-left font-medium whitespace-nowrap">Status</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan="6" className="px-4 py-6 text-center text-gray-500">
+                      <td colSpan={2 + actionColumns.filter(({ visible }) => visible).length} className="px-4 py-6 text-center text-gray-500">
                           Loading inventory...
                         </td>
                       </tr>
                     ) : inventory.length === 0 ? (
                       <tr>
-                        <td colSpan="6" className="px-4 py-6 text-center text-gray-500">
+                      <td colSpan={2 + actionColumns.filter(({ visible }) => visible).length} className="px-4 py-6 text-center text-gray-500">
                           No items found.
                         </td>
                       </tr>
                     ) : (
-                      inventory.map((row) => {
+                    currentInventory.map((row) => {
                         const isActive = row.status?.toLowerCase() === "active";
                         return (
                           <tr
@@ -956,12 +1082,12 @@ export default function Inventory() {
                                 <FaPen />
                               </button>
                             </td>
-                            <td className="px-4 py-3 font-medium text-gray-800">
+                            {isColumnVisible("itemName") && <td className="px-4 py-3 font-medium text-gray-800">
                               {toInitCap(row.item_name)}
-                            </td>
-                            <td className="px-4 py-3 text-gray-700">{row.ac_unit}</td>
-                            <td className="px-4 py-3 text-gray-700">{row.stock_quantity}</td>
-                            <td className="px-4 py-3">
+                            </td>}
+                            {isColumnVisible("unit") && <td className="px-4 py-3 text-gray-700">{row.ac_unit}</td>}
+                            {isColumnVisible("stock") && <td className="px-4 py-3 text-gray-700">{row.stock_quantity}</td>}
+                            {isColumnVisible("status") && <td className="px-4 py-3">
                               <button
                                 onClick={() => handleActiveStatusChange(row)}
                                 className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all duration-300 shadow-sm hover:shadow-lg ${
@@ -982,7 +1108,7 @@ export default function Inventory() {
                                   </>
                                 )}
                               </button>
-                            </td>
+                            </td>}
                           </tr>
                         );
                       })
@@ -994,10 +1120,41 @@ export default function Inventory() {
                     Loading more inventory...
                   </p>
                 )}
-                {!loading && !loadingMore && inventory.length > 0 && !hasMore && (
+                {!loading && !loadingMore && inventory.length > 0 && !hasMore && rowsPerPage !== 0 && (
                   <p className="px-4 py-4 text-center text-gray-500">
                     No more data
                   </p>
+                )}
+                {!loading && inventory.length > 0 && (
+                  <div className="flex items-center justify-between border-t border-gray-100 px-4 py-3 text-sm text-gray-600">
+                    <span>
+                      {rowsPerPage === 0
+                        ? `${inventory.length} records`
+                        : `Page ${currentPage} · ${inventory.length} records loaded`}
+                    </span>
+                    {rowsPerPage !== 0 && <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={currentPage === 1 || loading || loadingMore}
+                        onClick={() => setCurrentPage((current) => current - 1)}
+                        className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          (inventory.length <= currentPage * rowsPerPage && !hasMore) ||
+                          loading ||
+                          loadingMore
+                        }
+                        onClick={handleInventoryNextPage}
+                        className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>}
+                  </div>
                 )}
               </div>
             </div>

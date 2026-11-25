@@ -14,6 +14,9 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { userAPI } from "../../services/api";
 import { getPasswordPolicyError } from "../../utils/passwordPolicy";
+import Actions, { useActionColumns } from "../../components/common/Actions";
+import { exportTableToPdf } from "../../utils/pdfExport";
+import { exportTableToCsv } from "../../utils/csvExport";
 
 const STATUS_STYLES = {
   Active: "bg-[#ebf7ef] text-[#1f7a3d] border-[#cbe8d3]",
@@ -39,6 +42,12 @@ const INITIAL_FORM = {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^\d{10}$/;
+const USER_TABLE_COLUMNS = [
+  { key: "userName", label: "User Name" },
+  { key: "status", label: "Status" },
+  { key: "role", label: "Role" },
+  { key: "loginType", label: "Login Type" },
+];
 
 const validateCreateForm = (formData) => {
   if (!formData.firstName.trim()) return "First name is required.";
@@ -65,6 +74,10 @@ const validateCreateForm = (formData) => {
 export default function UserManagement() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+  const { actionColumns, isColumnVisible, toggleColumn } =
+    useActionColumns(USER_TABLE_COLUMNS);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -90,6 +103,7 @@ export default function UserManagement() {
 
       const response = await userAPI.getAll(searchValue.trim());
       setUsers(response.data?.data || []);
+      setCurrentPage(1);
     } catch (fetchError) {
       console.error("Failed to fetch users:", fetchError);
       const fetchErrorMessage =
@@ -111,6 +125,53 @@ export default function UserManagement() {
   };
 
   const visibleUsers = useMemo(() => users || [], [users]);
+  const totalPages = rowsPerPage === 0
+    ? 1
+    : Math.ceil(visibleUsers.length / rowsPerPage);
+  const currentUsers = rowsPerPage === 0
+    ? visibleUsers
+    : visibleUsers.slice(
+        (currentPage - 1) * rowsPerPage,
+        currentPage * rowsPerPage
+      );
+  const userExportRows = visibleUsers.map((row) => ({
+    userName: row.USER_NAME || "-",
+    status: row.status || "-",
+    role: formatRoleLabel(row.Role),
+    loginType: row.LOGIN_TYPE
+      ? `${row.LOGIN_TYPE.charAt(0)}${row.LOGIN_TYPE.slice(1).toLowerCase()}`
+      : "-",
+  }));
+  const selectedUserColumns = USER_TABLE_COLUMNS.filter(({ key }) =>
+    isColumnVisible(key)
+  );
+  const downloadUsersCsv = () => {
+    if (!userExportRows.length) {
+      toast.info("No users to download.");
+      return;
+    }
+    exportTableToCsv({
+      fileName: "users.csv",
+      headers: selectedUserColumns.map(({ label }) => label),
+      rows: userExportRows.map((row) =>
+        selectedUserColumns.map(({ key }) => row[key])
+      ),
+    });
+  };
+  const downloadUsersPdf = () => {
+    if (!userExportRows.length) {
+      toast.info("No users to download.");
+      return;
+    }
+    exportTableToPdf({
+      title: "User Management",
+      fileName: "users.pdf",
+      headers: selectedUserColumns.map(({ label }) => label),
+      rows: userExportRows.map((row) =>
+        selectedUserColumns.map(({ key }) => row[key])
+      ),
+    });
+  };
 
   const currentUser = useMemo(() => {
     if (user) {
@@ -463,6 +524,20 @@ export default function UserManagement() {
               </div>
             ) : null}
 
+            <div className="mb-3 flex justify-end">
+              <Actions
+                columns={actionColumns}
+                onToggleColumn={toggleColumn}
+                rowsPerPage={rowsPerPage}
+                onRowsPerPageChange={(value) => {
+                  setRowsPerPage(value);
+                  setCurrentPage(1);
+                }}
+                onDownloadCsv={downloadUsersCsv}
+                onDownloadPdf={downloadUsersPdf}
+                loading={loading}
+              />
+            </div>
             <div className="overflow-hidden rounded-2xl border border-afmc-gold/25 bg-white">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[860px] text-sm">
@@ -471,19 +546,19 @@ export default function UserManagement() {
                   <th className="px-4 py-3 text-left font-medium">
                     View
                   </th>
-                  <th className="px-4 py-3 text-left font-medium">
+                  {isColumnVisible("userName") && <th className="px-4 py-3 text-left font-medium">
                     User Name
-                  </th>
+                  </th>}
                   {/* <th className="px-4 py-3 text-left font-medium">
                     Officer ID
                   </th> */}
-                  <th className="px-4 py-3 text-left font-medium">
+                  {isColumnVisible("status") && <th className="px-4 py-3 text-left font-medium">
                     Status
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium">
+                  </th>}
+                  {isColumnVisible("role") && <th className="px-4 py-3 text-left font-medium">
                     Role
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium">Login Type</th>
+                  </th>}
+                  {isColumnVisible("loginType") && <th className="px-4 py-3 text-left font-medium">Login Type</th>}
                   <th className="px-1 py-3 text-center font-medium">Reset Password</th>
                 </tr>
               </thead>
@@ -491,18 +566,18 @@ export default function UserManagement() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td className="px-4 py-6 text-center text-gray-500" colSpan="6">
+                    <td className="px-4 py-6 text-center text-gray-500" colSpan={2 + selectedUserColumns.length}>
                       Loading user details...
                     </td>
                   </tr>
                 ) : error ? (
                   <tr>
-                    <td className="px-4 py-6 text-center text-red-600" colSpan="6">
+                    <td className="px-4 py-6 text-center text-red-600" colSpan={2 + selectedUserColumns.length}>
                       {error}
                     </td>
                   </tr>
-                ) : visibleUsers.length ? (
-                  visibleUsers.map((user) => {
+                ) : currentUsers.length ? (
+                  currentUsers.map((user) => {
                     const statusClass =
                       STATUS_STYLES[user.status] || STATUS_STYLES.Inactive;
 
@@ -521,29 +596,29 @@ export default function UserManagement() {
                             <Eye size={18} />
                           </button>
                         </td>
-                        <td className="px-4 py-3 font-medium text-gray-800">
+                        {isColumnVisible("userName") && <td className="px-4 py-3 font-medium text-gray-800">
                           {user.USER_NAME || "-"}
-                        </td>
+                        </td>}
                         {/* <td className="px-4 py-3 text-gray-700">
                           {user.OFFICER_ID || "-"}
                         </td> */}
-                        <td className="px-4 py-3">
+                        {isColumnVisible("status") && <td className="px-4 py-3">
                           <span
                             className={`inline-flex rounded-full border px-3 py-1 text-sm font-semibold ${statusClass}`}
                           >
                             {user.status}
                           </span>
-                        </td>
-                        <td className="px-4 py-3 text-gray-700">
+                        </td>}
+                        {isColumnVisible("role") && <td className="px-4 py-3 text-gray-700">
                           {formatRoleLabel(user.Role)}
-                        </td>
-                        <td className="px-4 py-3 text-gray-700">
+                        </td>}
+                        {isColumnVisible("loginType") && <td className="px-4 py-3 text-gray-700">
                           {user.LOGIN_TYPE
                             ? `${user.LOGIN_TYPE.charAt(0)}${user.LOGIN_TYPE
                                 .slice(1)
                                 .toLowerCase()}`
                             : "-"}
-                        </td>
+                        </td>}
                         <td className="px-4 py-3 text-center">
                           <button
                             type="button"
@@ -562,7 +637,7 @@ export default function UserManagement() {
                   })
                 ) : (
                   <tr>
-                    <td className="px-4 py-6 text-center text-gray-500" colSpan="6">
+                    <td className="px-4 py-6 text-center text-gray-500" colSpan={2 + selectedUserColumns.length}>
                       No users found.
                     </td>
                   </tr>
@@ -570,6 +645,33 @@ export default function UserManagement() {
               </tbody>
                 </table>
               </div>
+              {visibleUsers.length > 0 && (
+                <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-4 py-3 text-sm text-gray-600">
+                  <span>
+                    {rowsPerPage === 0
+                      ? `All ${visibleUsers.length} users`
+                      : `Page ${currentPage} of ${totalPages || 1} (${visibleUsers.length} users)`}
+                  </span>
+                  {rowsPerPage !== 0 && <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage((page) => page - 1)}
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setCurrentPage((page) => page + 1)}
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>}
+                </div>
+              )}
             </div>
           </div>
         </div>

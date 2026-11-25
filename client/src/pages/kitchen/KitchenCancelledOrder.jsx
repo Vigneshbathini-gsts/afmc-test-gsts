@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from "react-router-dom";
 import { barOrdersAPI } from '../../services/api';
 import { exportTableToPdf } from '../../utils/pdfExport';
+import { exportTableToCsv } from '../../utils/csvExport';
+import Actions, { useActionColumns } from '../../components/common/Actions';
 import { formatDisplayDate, formatForInput } from '../../utils/dateUtils';
 import {
     FaTimesCircle,
@@ -15,6 +17,14 @@ import {
     FaArrowLeft,
 } from "react-icons/fa";
 import { toInitCap } from '../../utils/textFormat';
+
+const CANCELLED_ORDER_COLUMNS = [
+    { key: "order", label: "Order" },
+    { key: "date", label: "Date" },
+    { key: "customer", label: "Customer Name" },
+    { key: "pubmed", label: "Pubmed" },
+    { key: "status", label: "Status" },
+];
 
 const KitchenCancelledOrder = () => {
     const navigate = useNavigate();
@@ -38,11 +48,13 @@ const KitchenCancelledOrder = () => {
     const [loading, setLoading] = useState(false);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
+    const [rowsPerPage, setRowsPerPage] = useState(10);
+    const { actionColumns, isColumnVisible, toggleColumn } =
+        useActionColumns(CANCELLED_ORDER_COLUMNS);
     const [orderItemDetails, setOrderItemDetails] = useState({});
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [modalOpen, setModalOpen] = useState(false);
 
-    const rowsPerPage = 10;
     // Set default dates (Today) when component mounts
     const fetchCancelledOrders = useCallback(async (startDate, endDate) => {
         setLoading(true);
@@ -120,12 +132,15 @@ const KitchenCancelledOrder = () => {
     }, [filteredAndSearchedOrders]);
 
     // Pagination
-    const totalPages = Math.ceil(filteredOrders.length / rowsPerPage);
+    const totalPages = rowsPerPage === 0
+        ? 1
+        : Math.ceil(filteredOrders.length / rowsPerPage);
     const safeTotalPages = Math.max(1, totalPages || 0);
     const paginatedOrders = useMemo(() => {
+        if (rowsPerPage === 0) return filteredOrders;
         const startIndex = (currentPage - 1) * rowsPerPage;
         return filteredOrders.slice(startIndex, startIndex + rowsPerPage);
-    }, [filteredOrders, currentPage]);
+    }, [filteredOrders, currentPage, rowsPerPage]);
 
     // Clamp current page when result set changes (prevents going to Page 2 of 1, etc.)
     useEffect(() => {
@@ -193,29 +208,55 @@ const KitchenCancelledOrder = () => {
         const subtitle = subtitleParts.join(' | ');
 
         // Prepare table rows
-        const tableRows = dataToExport.map(order => [
-            order.order_num?.toString() || '',
-            order.order_date ? formatDate(order.order_date) : 'N/A',
-            order.first_name || 'N/A',
-            order.pubmed_name || 'N/A',
-            "CANCELLED"
-        ]);
+        const columns = CANCELLED_ORDER_COLUMNS.filter(({ key }) =>
+            isColumnVisible(key)
+        );
+        const tableRows = dataToExport.map(order => {
+            const values = {
+                order: order.order_num?.toString() || '',
+                date: order.order_date ? formatDate(order.order_date) : 'N/A',
+                customer: order.first_name || 'N/A',
+                pubmed: toInitCap(order.pubmed_name) || 'N/A',
+                status: "CANCELLED",
+            };
+            return columns.map(({ key }) => values[key]);
+        });
 
         exportTableToPdf({
             mainHeader: "ARMED FORCES MEDICAL COLLEGE",
             title: "Cancelled Orders Report",
             fileName: `cancelled-orders-${formatForInput(new Date())}.pdf`,
             subtitle: subtitle,
-            headers: [
-                "Order Number",
-                "Order Date",
-                "Customer Name",
-                "Pubmed",
-                "Status"
-            ],
+            headers: columns.map(({ label }) => label),
             rows: tableRows,
             footerText: "Armed Forces Medical College - Cancelled Orders Report",
             showLogo: true,
+        });
+    };
+
+    const downloadCSV = () => {
+        if (!filteredOrders.length) {
+            alert("No cancelled orders to download!");
+            return;
+        }
+
+        const columns = CANCELLED_ORDER_COLUMNS.filter(({ key }) =>
+            isColumnVisible(key)
+        );
+        const rows = filteredOrders.map((order) => {
+            const values = {
+                order: order.order_num?.toString() || '',
+                date: order.order_date ? formatDate(order.order_date) : 'N/A',
+                customer: order.first_name || 'N/A',
+                pubmed: toInitCap(order.pubmed_name) || 'N/A',
+                status: "CANCELLED",
+            };
+            return columns.map(({ key }) => values[key]);
+        });
+        exportTableToCsv({
+            fileName: `cancelled-orders-${formatForInput(new Date())}.csv`,
+            headers: columns.map(({ label }) => label),
+            rows,
         });
     };
 
@@ -319,8 +360,8 @@ const KitchenCancelledOrder = () => {
                             </div>
 
                             {/* Search and Download - Side by side on mobile */}
-                            <div className="flex flex-row items-center gap-2 w-full md:w-auto">
-                                <div className="relative flex-1 md:w-80">
+                            <div className="flex flex-row flex-wrap items-center gap-2 w-full md:w-auto">
+                                <div className="relative min-w-[180px] flex-1 md:w-80">
                                     <FaSearch className="absolute top-1/2 left-3 -translate-y-1/2 text-gray-400 text-sm" />
                                     <input
                                         type="text"
@@ -338,6 +379,18 @@ const KitchenCancelledOrder = () => {
                                         </button>
                                     )}
                                 </div>
+                                <Actions
+                                    columns={actionColumns}
+                                    onToggleColumn={toggleColumn}
+                                    rowsPerPage={rowsPerPage}
+                                    onRowsPerPageChange={(value) => {
+                                        setRowsPerPage(value);
+                                        setCurrentPage(1);
+                                    }}
+                                    onDownloadCsv={downloadCSV}
+                                    onDownloadPdf={downloadPDF}
+                                    loading={loading}
+                                />
                                 <button
                                     onClick={downloadPDF}
                                     disabled={filteredOrders.length === 0}
@@ -368,34 +421,34 @@ const KitchenCancelledOrder = () => {
                                 <table className="min-w-full text-sm">
                                     <thead className="bg-gray-50 text-gray-700 text-xs tracking-wider">
                                         <tr>
-                                            <th className="px-6 py-3 text-left">Order</th>
-                                            <th className="px-6 py-3 text-left">Date</th>
-                                            <th className="px-6 py-3 text-left">Customer Name</th>
-                                            <th className="px-6 py-3 text-left">Pubmed</th>
-                                            <th className="px-6 py-3 text-left">Status</th>
+                                            {isColumnVisible("order") && <th className="px-6 py-3 text-left">Order</th>}
+                                            {isColumnVisible("date") && <th className="px-6 py-3 text-left">Date</th>}
+                                            {isColumnVisible("customer") && <th className="px-6 py-3 text-left">Customer Name</th>}
+                                            {isColumnVisible("pubmed") && <th className="px-6 py-3 text-left">Pubmed</th>}
+                                            {isColumnVisible("status") && <th className="px-6 py-3 text-left">Status</th>}
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {paginatedOrders.map((order, index) => (
                                             <tr key={order.order_num || index} className="border-t border-gray-100 hover:bg-gray-50 transition">
-                                                <td className="px-6 py-3 font-semibold">
+                                                {isColumnVisible("order") && <td className="px-6 py-3 font-semibold">
                                                     <button
                                                         onClick={() => handleOrderClick(order)}
                                                         className="text-afmc-maroon hover:text-afmc-maroon2 hover:underline font-medium cursor-pointer"
                                                     >
                                                         {order.order_num}
                                                     </button>
-                                                </td>
-                                                <td className="px-6 py-3 text-gray-600">
+                                                </td>}
+                                                {isColumnVisible("date") && <td className="px-6 py-3 text-gray-600">
                                                     {order.order_date ? formatDate(order.order_date) : 'N/A'}
-                                                </td>
-                                                <td className="px-6 py-3 text-gray-700">{toInitCap(order.first_name) || 'N/A'}</td>
-                                                <td className="px-6 py-3 text-gray-600">{toInitCap(order.pubmed_name) || 'N/A'}</td>
-                                                <td className="px-6 py-3">
+                                                </td>}
+                                                {isColumnVisible("customer") && <td className="px-6 py-3 text-gray-700">{toInitCap(order.first_name) || 'N/A'}</td>}
+                                                {isColumnVisible("pubmed") && <td className="px-6 py-3 text-gray-600">{toInitCap(order.pubmed_name) || 'N/A'}</td>}
+                                                {isColumnVisible("status") && <td className="px-6 py-3">
                                                     <span className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold ${getStatusClasses()}`}>
                                                         Cancelled
                                                     </span>
-                                                </td>
+                                                </td>}
                                             </tr>
                                         ))}
                                     </tbody>
@@ -405,9 +458,11 @@ const KitchenCancelledOrder = () => {
                             {/* Pagination */}
                             <div className="flex flex-col md:flex-row items-center justify-between gap-3 px-5 py-4 border-t bg-gray-50">
                                 <p className="text-sm text-gray-600">
-                                    Showing {(currentPage - 1) * rowsPerPage + 1} to {Math.min(currentPage * rowsPerPage, filteredOrders.length)} of {filteredOrders.length} orders
+                                    {rowsPerPage === 0
+                                        ? `Showing all ${filteredOrders.length} orders`
+                                        : `Showing ${(currentPage - 1) * rowsPerPage + 1} to ${Math.min(currentPage * rowsPerPage, filteredOrders.length)} of ${filteredOrders.length} orders`}
                                 </p>
-                                <div className="flex items-center gap-2">
+                                {rowsPerPage !== 0 && <div className="flex items-center gap-2">
                                     <button
                                         onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
                                         disabled={currentPage === 1}
@@ -427,7 +482,7 @@ const KitchenCancelledOrder = () => {
                                     >
                                         <FaChevronRight />
                                     </button>
-                                </div>
+                                </div>}
                             </div>
                         </>
                     )}

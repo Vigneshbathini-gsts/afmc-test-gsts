@@ -5,6 +5,16 @@ import OrderDetailsModal from "../../components/OrderDetailsModal";
 import { useNavigate } from "react-router-dom";
 import { exportTableToPdf } from "../../utils/pdfExport";
 import { formatDisplayDate } from "../../utils/dateUtils";
+import Actions, { useActionColumns } from "../../components/common/Actions";
+import { exportTableToCsv } from "../../utils/csvExport";
+
+const CANCELLED_ORDER_COLUMNS = [
+  { key: "orderNumber", label: "Order No" },
+  { key: "status", label: "Status" },
+  { key: "orderDate", label: "Order Date" },
+  { key: "customer", label: "Customer Name" },
+  { key: "pubmed", label: "Pubmed" },
+];
 
 // Helper function to convert string to INITCAP (Title Case)
 const toInitCap = (str) => {
@@ -17,6 +27,9 @@ export default function CancelledOrders() {
   const navigate = useNavigate();
   const [selectedOrderNumber, setSelectedOrderNumber] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const { actionColumns, isColumnVisible, toggleColumn } =
+    useActionColumns(CANCELLED_ORDER_COLUMNS);
   const today = new Date().toISOString().split("T")[0];
 
   const [filters, setFilters] = useState({
@@ -36,7 +49,6 @@ export default function CancelledOrders() {
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
-  const [rowsPerPage] = useState(10);
 
   const openOrderDetails = (orderNumber) => {
     // console.log("Opening details for order:", orderNumber);
@@ -100,44 +112,6 @@ export default function CancelledOrders() {
     fetchCancelledOrders(nextFilters);
   };
 
-  const handleDownload = () => {
-    if (!orders.length) {
-      alert("No Data To Download");
-      return;
-    }
-
-    // Format date for display
-    const formatDate = (dateString) => {
-      if (!dateString) return "-";
-      const date = new Date(dateString);
-      return date.toLocaleDateString();
-    };
-
-    // Dynamic values based on current component
-    exportTableToPdf({
-      mainHeader: "ARMED FORCES MEDICAL COLLEGE",
-      title: "Cancelled Orders Report",
-      fileName: `cancelled-orders-${new Date().toISOString().split("T")[0]}.pdf`,
-      subtitle: `From: ${formatDate(filters.fromDate)} To: ${formatDate(filters.toDate)}`,
-      headers: [
-        "Order Number",
-        "Status",
-        "Order Date",
-        "Customer Name",
-        "Pubmed"
-      ],
-      rows: orders.map((order) => [
-        order?.ORDER_NUM ?? "",
-        toInitCap(order?.status ?? ""),
-        formatDisplayDate(order?.ORDER_DATE ?? ""),
-        toInitCap(order?.FIRST_NAME ?? ""),
-        toInitCap(order?.pubmed_name ?? ""),
-      ]),
-      footerText: "Armed Forces Medical College - Cancelled Orders Report",
-      showLogo: true,
-    });
-  };
-
   // Filter orders based on search criteria (search in both order number and customer name)
   const filteredOrders = orders.filter((order) => {
     const searchTermLower = searchFilters.searchTerm.toLowerCase();
@@ -153,10 +127,64 @@ export default function CancelledOrders() {
   });
 
   // Pagination logic
-  const totalPages = Math.ceil(filteredOrders.length / rowsPerPage);
-  const startIndex = (currentPage - 1) * rowsPerPage;
-  const endIndex = startIndex + rowsPerPage;
-  const currentOrders = filteredOrders.slice(startIndex, endIndex);
+  const totalPages = rowsPerPage === 0
+    ? 1
+    : Math.ceil(filteredOrders.length / rowsPerPage);
+  const startIndex = rowsPerPage === 0 ? 0 : (currentPage - 1) * rowsPerPage;
+  const endIndex = rowsPerPage === 0 ? filteredOrders.length : startIndex + rowsPerPage;
+  const currentOrders = rowsPerPage === 0
+    ? filteredOrders
+    : filteredOrders.slice(startIndex, endIndex);
+  const getExportRows = () =>
+    filteredOrders.map((order) => ({
+      orderNumber: order?.ORDER_NUM ?? "",
+      status: toInitCap(order?.status ?? ""),
+      orderDate: formatDisplayDate(order?.ORDER_DATE ?? ""),
+      customer: toInitCap(order?.FIRST_NAME ?? ""),
+      pubmed: toInitCap(order?.pubmed_name ?? ""),
+    }));
+
+  const downloadCsv = () => {
+    const columns = CANCELLED_ORDER_COLUMNS.filter(({ key }) =>
+      isColumnVisible(key)
+    );
+    const rows = getExportRows();
+    if (!rows.length) {
+      alert("No Data To Download");
+      return;
+    }
+    exportTableToCsv({
+      fileName: `cancelled-orders-${today}.csv`,
+      headers: columns.map(({ label }) => label),
+      rows: rows.map((row) => columns.map(({ key }) => row[key])),
+    });
+  };
+
+  const downloadPdf = () => {
+    const columns = CANCELLED_ORDER_COLUMNS.filter(({ key }) =>
+      isColumnVisible(key)
+    );
+    const rows = getExportRows();
+    if (!rows.length) {
+      alert("No Data To Download");
+      return;
+    }
+    const formatDate = (dateString) => {
+      if (!dateString) return "-";
+      const date = new Date(dateString);
+      return date.toLocaleDateString();
+    };
+    exportTableToPdf({
+      mainHeader: "ARMED FORCES MEDICAL COLLEGE",
+      title: "Cancelled Orders Report",
+      fileName: `cancelled-orders-${today}.pdf`,
+      subtitle: `From: ${formatDate(filters.fromDate)} To: ${formatDate(filters.toDate)}`,
+      headers: columns.map(({ label }) => label),
+      rows: rows.map((row) => columns.map(({ key }) => row[key])),
+      footerText: "Armed Forces Medical College - Cancelled Orders Report",
+      showLogo: true,
+    });
+  };
 
   const handlePageChange = (pageNumber) => {
     setCurrentPage(pageNumber);
@@ -180,7 +208,8 @@ export default function CancelledOrders() {
           <h1 className="text-2xl font-semibold text-gray-800">Cancelled Orders</h1>
           <div className="flex flex-wrap items-center justify-end gap-3">
             <button
-              onClick={handleDownload}
+              type="button"
+              onClick={downloadPdf}
               className="flex items-center gap-2 rounded-2xl bg-afmc-maroon px-5 py-3 text-sm font-semibold text-white shadow transition hover:bg-afmc-maroon2"
             >
               <FaDownload size={14} />
@@ -283,6 +312,18 @@ export default function CancelledOrders() {
                 )}
               </p>
             </div>
+            <Actions
+              columns={actionColumns}
+              onToggleColumn={toggleColumn}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={(value) => {
+                setRowsPerPage(value);
+                setCurrentPage(1);
+              }}
+              onDownloadCsv={downloadCsv}
+              onDownloadPdf={downloadPdf}
+              loading={loading}
+            />
           </div>
 
           {loading ? (
@@ -293,36 +334,38 @@ export default function CancelledOrders() {
                 <table className="w-full min-w-[780px] text-sm">
                   <thead className="bg-gray-50 text-gray-600">
                     <tr>
-                      <th className="px-4 py-3 text-left font-medium">Order No</th>
-                      <th className="px-4 py-3 text-left font-medium">Status</th>
-                      <th className="px-4 py-3 text-left font-medium">Order Date</th>
-                      <th className="px-4 py-3 text-left font-medium">Customer Name</th>
-                      <th className="px-4 py-3 text-left font-medium">Pubmed</th>
+                      {isColumnVisible("orderNumber") && <th className="px-4 py-3 text-left font-medium">Order No</th>}
+                      {isColumnVisible("status") && <th className="px-4 py-3 text-left font-medium">Status</th>}
+                      {isColumnVisible("orderDate") && <th className="px-4 py-3 text-left font-medium">Order Date</th>}
+                      {isColumnVisible("customer") && <th className="px-4 py-3 text-left font-medium">Customer Name</th>}
+                      {isColumnVisible("pubmed") && <th className="px-4 py-3 text-left font-medium">Pubmed</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {currentOrders.length > 0 ? (
                       currentOrders.map((row, index) => (
                         <tr key={index} className="border-t border-gray-100 hover:bg-gray-50 text-gray-700">
-                          <td
-                            className="px-4 py-3 text-afmc-maroon font-semibold cursor-pointer hover:underline"
-                            onClick={() => openOrderDetails(row.ORDER_NUM)}
-                          >
-                            {row.ORDER_NUM}
-                          </td>
-                          <td className="px-4 py-3">
+                          {isColumnVisible("orderNumber") && (
+                            <td
+                              className="px-4 py-3 text-afmc-maroon font-semibold cursor-pointer hover:underline"
+                              onClick={() => openOrderDetails(row.ORDER_NUM)}
+                            >
+                              {row.ORDER_NUM}
+                            </td>
+                          )}
+                          {isColumnVisible("status") && <td className="px-4 py-3">
                             <span className="inline-flex rounded-full bg-red-100 px-2 py-1 text-xs font-semibold text-red-700">
                               {toInitCap(row.status)}
                             </span>
-                          </td>
-                          <td className="px-4 py-3">{formatDisplayDate(row.ORDER_DATE)}</td>
-                          <td className="px-4 py-3">{toInitCap(row.FIRST_NAME)}</td>
-                          <td className="px-4 py-3">{toInitCap(row.pubmed_name)}</td>
+                          </td>}
+                          {isColumnVisible("orderDate") && <td className="px-4 py-3">{formatDisplayDate(row.ORDER_DATE)}</td>}
+                          {isColumnVisible("customer") && <td className="px-4 py-3">{toInitCap(row.FIRST_NAME)}</td>}
+                          {isColumnVisible("pubmed") && <td className="px-4 py-3">{toInitCap(row.pubmed_name)}</td>}
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="5" className="px-4 py-8 text-center text-gray-500">
+                        <td colSpan={Math.max(1, CANCELLED_ORDER_COLUMNS.filter(({ key }) => isColumnVisible(key)).length)} className="px-4 py-8 text-center text-gray-500">
                           No Cancelled Orders Found
                         </td>
                       </tr>
@@ -333,8 +376,12 @@ export default function CancelledOrders() {
 
               {filteredOrders.length > 0 && (
                 <div className="mt-5 flex flex-col gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
-                  <div>Page {currentPage} of {totalPages || 1}</div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div>
+                    {rowsPerPage === 0
+                      ? `All ${filteredOrders.length} records`
+                      : `Page ${currentPage} of ${totalPages || 1}`}
+                  </div>
+                  {rowsPerPage !== 0 && <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={handlePrevious}
                       disabled={currentPage === 1}
@@ -363,7 +410,7 @@ export default function CancelledOrders() {
                       Next
                       <FaChevronRight size={12} />
                     </button>
-                  </div>
+                  </div>}
                 </div>
               )}
             </>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from "react-router-dom";
 import { barOrdersAPI } from '../../services/api';
 import {
@@ -14,8 +14,26 @@ import {
   FaArrowLeft,
 } from "react-icons/fa";
 import { exportTableToPdf } from '../../utils/pdfExport';
+import { exportTableToCsv } from '../../utils/csvExport';
+import Actions, { useActionColumns } from '../../components/common/Actions';
 import { formatDisplayDate, formatForInput } from '../../utils/dateUtils';
 import { toInitCap } from '../../utils/textFormat';
+
+const ORDER_HISTORY_FETCH_SIZE = 100;
+const ORDER_HISTORY_COLUMNS = [
+  { key: "order", label: "Order Number" },
+  { key: "date", label: "Order Date" },
+  { key: "customer", label: "Customer Name" },
+  { key: "phone", label: "Phone Number" },
+  { key: "subtotal", label: "Subtotal" },
+  { key: "status", label: "Status" },
+];
+
+const getOrderHistoryRows = (response) => {
+  if (Array.isArray(response?.data?.data)) return response.data.data;
+  if (Array.isArray(response?.data)) return response.data;
+  return [];
+};
 
 const KitchenOrderHistory = () => {
   const navigate = useNavigate();
@@ -40,38 +58,77 @@ const KitchenOrderHistory = () => {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pagination, setPagination] = useState(null);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [downloading, setDownloading] = useState(false);
+  const rowsPerPageRef = useRef(10);
+  const { actionColumns, isColumnVisible, toggleColumn } =
+    useActionColumns(ORDER_HISTORY_COLUMNS);
   const [orderItemDetails, setOrderItemDetails] = useState({});
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const rowsPerPage = 10;
-  
-  // Fetch orders from API (only dates)
-  const fetchOrderHistory = useCallback(async (startDate, endDate, page = 1) => {
-    setLoading(true);
-    try {
+
+  const fetchAllOrderHistoryRows = useCallback(async (startDate, endDate) => {
+    const allRows = [];
+    let page = 1;
+    let totalPages = 0;
+    while (true) {
       const params = {
         page,
-        limit: rowsPerPage,
+        limit: ORDER_HISTORY_FETCH_SIZE,
         kitchen: kitchenType,
       };
       if (startDate) params.fromDate = startDate;
       if (endDate) params.toDate = endDate;
 
-      console.log("Fetching orders with params:", params);
-
       const response = await barOrdersAPI.getOrderHistory(params);
-      console.log("API Response:", response?.data);
+      const pageRows = getOrderHistoryRows(response);
+      allRows.push(...pageRows);
+      totalPages = Number(response?.data?.pagination?.totalPages || 0);
+      if (
+        (totalPages > 0 && page >= totalPages) ||
+        (!totalPages && pageRows.length < ORDER_HISTORY_FETCH_SIZE)
+      ) {
+        break;
+      }
+      page += 1;
+    }
+    return allRows;
+  }, [kitchenType]);
 
-      let ordersData = [];
+  // Fetch orders from API (only dates)
+  const fetchOrderHistory = useCallback(async (
+    startDate,
+    endDate,
+    page = 1,
+    pageSize = rowsPerPageRef.current
+  ) => {
+    setLoading(true);
+    try {
+      let ordersData;
+      let paginationData;
+      if (pageSize === 0) {
+        ordersData = await fetchAllOrderHistoryRows(startDate, endDate);
+        paginationData = {
+          currentPage: 1,
+          totalPages: 1,
+          totalRecords: ordersData.length,
+        };
+      } else {
+        const params = {
+          page,
+          limit: pageSize,
+          kitchen: kitchenType,
+        };
+        if (startDate) params.fromDate = startDate;
+        if (endDate) params.toDate = endDate;
 
-      if (response?.data?.data && Array.isArray(response.data.data)) {
-        ordersData = response.data.data;
-      } else if (response?.data && Array.isArray(response.data)) {
-        ordersData = response.data;
+        const response = await barOrdersAPI.getOrderHistory(params);
+        ordersData = getOrderHistoryRows(response);
+        paginationData = response?.data?.pagination || null;
       }
       setOrders(ordersData);
-      setPagination(response?.data?.pagination || null);
-      setCurrentPage(response?.data?.pagination?.currentPage || page);
+      setPagination(paginationData);
+      setCurrentPage(paginationData?.currentPage || page);
     } catch (error) {
       console.error('Error fetching order history:', error);
       alert('Failed to fetch order history');
@@ -80,7 +137,7 @@ const KitchenOrderHistory = () => {
     } finally {
       setLoading(false);
     }
-  }, [kitchenType]);
+  }, [fetchAllOrderHistoryRows, kitchenType]);
 
   // Set default dates (Today) when component mounts
   useEffect(() => {
@@ -135,17 +192,19 @@ const KitchenOrderHistory = () => {
   // Pagination
   const isSearching = searchTerm.trim().length > 0;
   const backendTotalRecords = Number(pagination?.totalRecords || orders.length || 0);
-  const totalPages = isSearching
-    ? Math.ceil(filteredOrders.length / rowsPerPage)
-    : Number(pagination?.totalPages || 1);
+  const totalPages = rowsPerPage === 0
+    ? 1
+    : isSearching
+      ? Math.ceil(filteredOrders.length / rowsPerPage)
+      : Number(pagination?.totalPages || 1);
   const safeTotalPages = Math.max(1, totalPages || 0);
   const paginatedOrders = useMemo(() => {
-    if (!isSearching) {
+    if (rowsPerPage === 0 || !isSearching) {
       return filteredOrders;
     }
     const startIndex = (currentPage - 1) * rowsPerPage;
     return filteredOrders.slice(startIndex, startIndex + rowsPerPage);
-  }, [filteredOrders, currentPage, isSearching]);
+  }, [filteredOrders, currentPage, isSearching, rowsPerPage]);
 
   useEffect(() => {
     setCurrentPage((prev) => {
@@ -167,6 +226,13 @@ const KitchenOrderHistory = () => {
     fetchOrderHistory(fromDate, toDate, page);
   };
 
+  const handleRowsPerPageChange = (pageSize) => {
+    rowsPerPageRef.current = pageSize;
+    setRowsPerPage(pageSize);
+    setCurrentPage(1);
+    fetchOrderHistory(fromDate, toDate, 1, pageSize);
+  };
+
   const fetchOrderItemDetails = async (orderNumber) => {
     if (!orderNumber) return;
 
@@ -174,8 +240,7 @@ const KitchenOrderHistory = () => {
     try {
       const response = await barOrdersAPI.getOrderHistoryItemDetails(orderNumber, kitchenType);
 
-      console.log('=== API Response for order details ===');
-      console.log('Full response:', response);
+      
 
       let items = [];
       let summary = null;
@@ -184,17 +249,14 @@ const KitchenOrderHistory = () => {
       if (response?.data?.data?.items && Array.isArray(response.data.data.items)) {
         items = response.data.data.items;
         summary = response.data.data.summary || null;
-        console.log('✅ Found items in response.data.data.items');
       } else if (response?.data?.items && Array.isArray(response.data.items)) {
         items = response.data.items;
         summary = response.data.summary || null;
-        console.log('✅ Found items in response.data.items');
       } else if (Array.isArray(response?.data)) {
         items = response.data;
-        console.log('✅ Found items in response.data (array)');
       } else if (Array.isArray(response)) {
         items = response;
-        console.log('✅ Found items in response (array)');
+       
       }
 
       // Format items - ensure all numeric fields are numbers
@@ -207,8 +269,7 @@ const KitchenOrderHistory = () => {
         quantity: item.quantity == null ? 0 : Number(item.quantity)
       }));
 
-      console.log('✅ Formatted items:', formattedItems);
-      console.log('✅ Summary:', summary);
+    
 
       // Store in state
       setOrderItemDetails(prev => ({
@@ -243,41 +304,91 @@ const KitchenOrderHistory = () => {
     return Number.isNaN(numericValue) ? "0.00" : numericValue.toFixed(2);
   };
 
-  const downloadPDF = () => {
-    const dataToExport = filteredOrders;
-    if (dataToExport.length === 0) {
-      alert("No orders to download!");
-      return;
-    }
+  const getOrdersForExport = async () => {
+    const allOrders = await fetchAllOrderHistoryRows(fromDate, toDate);
+    const term = searchTerm.toLowerCase().trim();
+    return term
+      ? allOrders.filter((order) =>
+          (order.order_num && order.order_num.toString().toLowerCase().includes(term)) ||
+          (order.first_name && order.first_name.toLowerCase().includes(term)) ||
+          (order.phone_number && order.phone_number.toLowerCase().includes(term))
+        )
+      : allOrders;
+  };
 
-    let subtitleParts = [];
-    if (fromDate && toDate) {
-      subtitleParts.push(`Period: ${formatDate(fromDate)} to ${formatDate(toDate)}`);
-    }
-    if (searchTerm) {
-      subtitleParts.push(`Search: ${searchTerm}`);
-    }
-    const subtitle = subtitleParts.join(' | ');
+  const getExportColumns = () =>
+    ORDER_HISTORY_COLUMNS.filter(({ key }) => isColumnVisible(key));
 
-    const tableRows = dataToExport.map(order => [
-      order.order_num?.toString() || '',
-      order.order_date ? formatDate(order.order_date) : 'N/A',
-      toInitCap(order.first_name) || 'N/A',
-      order.phone_number || 'N/A',
-      `${order.subtotal || '0'}`,
-      toInitCap(order.status || 'PREPARING')
-    ]);
+  const getExportRow = (order) => ({
+    order: order.order_num?.toString() || '',
+    date: order.order_date ? formatDate(order.order_date) : 'N/A',
+    customer: toInitCap(order.first_name) || 'N/A',
+    phone: order.phone_number || 'N/A',
+    subtotal: `${order.subtotal || '0'}`,
+    status: toInitCap(order.status || 'PREPARING'),
+  });
 
-    exportTableToPdf({
-      mainHeader: "ARMED FORCES MEDICAL COLLEGE",
-      title: "Kitchen Order History Report",
-      fileName: `order-history-${formatForInput(new Date())}.pdf`,
-      subtitle: subtitle,
-      headers: ["Order Number", "Order Date", "Customer Name", "Phone Number", "Subtotal", "Status"],
-      rows: tableRows,
-      footerText: "Armed Forces Medical College - Kitchen Order History Report",
-      showLogo: true,
-    });
+  const downloadPDF = async () => {
+    setDownloading(true);
+    try {
+      const dataToExport = await getOrdersForExport();
+      if (dataToExport.length === 0) {
+        alert("No orders to download!");
+        return;
+      }
+
+      const subtitleParts = [];
+      if (fromDate && toDate) {
+        subtitleParts.push(`Period: ${formatDate(fromDate)} to ${formatDate(toDate)}`);
+      }
+      if (searchTerm) subtitleParts.push(`Search: ${searchTerm}`);
+      const columns = getExportColumns();
+      const rows = dataToExport.map((order) => {
+        const values = getExportRow(order);
+        return columns.map(({ key }) => values[key]);
+      });
+
+      exportTableToPdf({
+        mainHeader: "ARMED FORCES MEDICAL COLLEGE",
+        title: "Kitchen Order History Report",
+        fileName: `order-history-${formatForInput(new Date())}.pdf`,
+        subtitle: subtitleParts.join(' | '),
+        headers: columns.map(({ label }) => label),
+        rows,
+        footerText: "Armed Forces Medical College - Kitchen Order History Report",
+        showLogo: true,
+      });
+    } catch (error) {
+      console.error("Failed to download order history PDF:", error);
+      alert("Failed to download order history PDF.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const downloadCSV = async () => {
+    setDownloading(true);
+    try {
+      const dataToExport = await getOrdersForExport();
+      if (dataToExport.length === 0) {
+        alert("No orders to download!");
+        return;
+      }
+      const columns = getExportColumns();
+      exportTableToCsv({
+        fileName: `order-history-${formatForInput(new Date())}.csv`,
+        headers: columns.map(({ label }) => label),
+        rows: dataToExport.map((order) => {
+          const values = getExportRow(order);
+          return columns.map(({ key }) => values[key]);
+        }),
+      });
+    } catch (error) {
+      console.error("Failed to download order history CSV:", error);
+      alert("Failed to download order history CSV.");
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const getStatusColor = (status) => {
@@ -387,8 +498,8 @@ const KitchenOrderHistory = () => {
                 </p>
               </div>
 
-              <div className="flex flex-row items-center gap-2 w-full md:w-auto">
-                <div className="relative flex-1 md:w-80">
+              <div className="flex flex-row flex-wrap items-center gap-2 w-full md:w-auto">
+                <div className="relative min-w-[180px] flex-1 md:w-80">
                   <FaSearch className="absolute top-1/2 left-3 -translate-y-1/2 text-gray-400 text-sm" />
                   <input
                     type="text"
@@ -408,13 +519,23 @@ const KitchenOrderHistory = () => {
                 </div>
                 <button
                   onClick={downloadPDF}
-                  disabled={filteredOrders.length === 0}
+                  disabled={filteredOrders.length === 0 || downloading}
                   className="px-4 py-3 rounded-2xl bg-afmc-maroon hover:bg-afmc-maroon2 text-white font-semibold flex items-center justify-center gap-2 shadow hover:shadow-md transition disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
                 >
                   <FaDownload />
                   <span className="hidden sm:inline">Download PDF</span>
                   <span className="sm:hidden">PDF</span>
                 </button>
+                <Actions
+                  columns={actionColumns}
+                  onToggleColumn={toggleColumn}
+                  rowsPerPage={rowsPerPage}
+                  onRowsPerPageChange={handleRowsPerPageChange}
+                  onDownloadCsv={downloadCSV}
+                  onDownloadPdf={downloadPDF}
+                  busy={downloading}
+                  loading={loading}
+                />
               </div>
             </div>
           </div>
@@ -436,40 +557,40 @@ const KitchenOrderHistory = () => {
                 <table className="min-w-full text-sm">
                   <thead className="bg-gray-50 text-gray-700 text-xs tracking-wider">
                     <tr>
-                      <th className="px-6 py-3 text-left">Order</th>
-                      <th className="px-6 py-3 text-left">Order Date</th>
-                      <th className="px-6 py-3 text-left">Customer Name</th>
-                      <th className="hidden sm:table-cell px-6 py-3 text-left">Phone Number</th>
-                      <th className="px-6 py-3 text-left">Subtotal</th>
-                      <th className="px-6 py-3 text-left">Status</th>
+                      {isColumnVisible("order") && <th className="px-6 py-3 text-left">Order</th>}
+                      {isColumnVisible("date") && <th className="px-6 py-3 text-left">Order Date</th>}
+                      {isColumnVisible("customer") && <th className="px-6 py-3 text-left">Customer Name</th>}
+                      {isColumnVisible("phone") && <th className="hidden sm:table-cell px-6 py-3 text-left">Phone Number</th>}
+                      {isColumnVisible("subtotal") && <th className="px-6 py-3 text-left">Subtotal</th>}
+                      {isColumnVisible("status") && <th className="px-6 py-3 text-left">Status</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {paginatedOrders.map((order, index) => (
                       <tr key={order.order_num || index} className="border-t border-gray-100 hover:bg-gray-50 transition">
-                        <td className="px-6 py-3 font-semibold">
+                        {isColumnVisible("order") && <td className="px-6 py-3 font-semibold">
                           <button
                             onClick={() => handleOrderClick(order)}
                             className="text-afmc-maroon hover:text-afmc-maroon2 hover:underline font-medium cursor-pointer"
                           >
                             {order.order_num}
                           </button>
-                        </td>
-                        <td className="px-6 py-3 text-gray-600">
+                        </td>}
+                        {isColumnVisible("date") && <td className="px-6 py-3 text-gray-600">
                           {order.order_date ? formatDate(order.order_date) : 'N/A'}
-                        </td>
-                        <td className="px-6 py-3 text-gray-700">{toInitCap(order.first_name) || 'N/A'}</td>
-                        <td className="hidden sm:table-cell px-6 py-3 text-gray-600">{order.phone_number || 'N/A'}</td>
-                        <td className="px-6 py-3">
+                        </td>}
+                        {isColumnVisible("customer") && <td className="px-6 py-3 text-gray-700">{toInitCap(order.first_name) || 'N/A'}</td>}
+                        {isColumnVisible("phone") && <td className="hidden sm:table-cell px-6 py-3 text-gray-600">{order.phone_number || 'N/A'}</td>}
+                        {isColumnVisible("subtotal") && <td className="px-6 py-3">
                           <span className="text-sm font-medium text-gray-900">
                             Rs. {formatCurrency(order.subtotal)}
                           </span>
-                        </td>
-                        <td className="px-6 py-3">
+                        </td>}
+                        {isColumnVisible("status") && <td className="px-6 py-3">
                           <span className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(order.status)}`}>
                             {toInitCap(order.status || 'PREPARING')}
                           </span>
-                        </td>
+                        </td>}
                       </tr>
                     ))}
                   </tbody>
@@ -479,9 +600,11 @@ const KitchenOrderHistory = () => {
               {/* Pagination */}
               <div className="flex flex-col md:flex-row items-center justify-between gap-3 px-5 py-4 border-t bg-gray-50">
                 <p className="text-sm text-gray-600">
-                  Showing {filteredOrders.length === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1} to {Math.min(currentPage * rowsPerPage, isSearching ? filteredOrders.length : backendTotalRecords)} of {isSearching ? filteredOrders.length : backendTotalRecords} orders
+                  {rowsPerPage === 0
+                    ? `Showing all ${isSearching ? filteredOrders.length : backendTotalRecords} orders`
+                    : `Showing ${filteredOrders.length === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1} to ${Math.min(currentPage * rowsPerPage, isSearching ? filteredOrders.length : backendTotalRecords)} of ${isSearching ? filteredOrders.length : backendTotalRecords} orders`}
                 </p>
-                <div className="flex items-center gap-2">
+                {rowsPerPage !== 0 && <div className="flex items-center gap-2">
                   <button
                     onClick={() => handlePageChange(currentPage - 1)}
                     disabled={currentPage === 1}
@@ -499,7 +622,7 @@ const KitchenOrderHistory = () => {
                   >
                     <FaChevronRight />
                   </button>
-                </div>
+                </div>}
               </div>
             </>
           )}
