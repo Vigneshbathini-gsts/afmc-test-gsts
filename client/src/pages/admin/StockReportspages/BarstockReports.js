@@ -6,6 +6,35 @@ import Stackreporttab from "./Stackreporttab";
 import { toInitCap } from "../../../utils/textFormat";
 import { exportTableToPdf } from "../../../utils/pdfExport";
 
+const getBarcodeDetails = (item) => {
+  const raw = item?.barcode_details ?? item?.BARCODE_DETAILS;
+  if (Array.isArray(raw)) return raw.filter((entry) => entry?.barcode);
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.filter((entry) => entry?.barcode);
+    } catch (_) {
+      // Use the legacy barcode list if detailed data is unavailable.
+    }
+  }
+  return String(item?.barcodes ?? item?.BARCODES ?? item?.barcode ?? item?.BARCODE ?? "")
+    .split(",").map((barcode) => barcode.trim()).filter(Boolean).map((barcode) => ({ barcode }));
+};
+
+const formatBarcodeDate = (value) => {
+  if (!value) return "-";
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}):(\d{2}))?/);
+  if (match) {
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4] || 0), Number(match[5] || 0), Number(match[6] || 0)));
+    const options = { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit" };
+    if (match[4] !== undefined) Object.assign(options, { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true });
+    const formatted = new Intl.DateTimeFormat("en-IN", options).format(date);
+    return match[4] !== undefined ? `${formatted} IST` : formatted;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+};
+
 export default function BarstockReports() {
   const navigate = useNavigate();
   const rowsPerPage = 20;
@@ -23,12 +52,6 @@ export default function BarstockReports() {
   const [hasMore, setHasMore] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [selectedBarcodeItem, setSelectedBarcodeItem] = useState(null);
-
-  const getBarcodes = (item) =>
-    String(item?.barcodes ?? item?.BARCODES ?? item?.barcode ?? item?.BARCODE ?? "")
-      .split(",")
-      .map((barcode) => barcode.trim())
-      .filter(Boolean);
 
   const getAcUnitLabel = useCallback((row) => {
     const value =
@@ -360,7 +383,14 @@ export default function BarstockReports() {
               <div><h2 id="stock-barcode-title" className="text-xl font-semibold text-afmc-maroon">Item barcodes</h2><p className="text-sm text-gray-600">{toInitCap(selectedBarcodeItem.item_name)} ({selectedBarcodeItem.item_code})</p></div>
               <button type="button" onClick={() => setSelectedBarcodeItem(null)} className="rounded-lg px-3 py-1 text-gray-600 hover:bg-gray-100" aria-label="Close">✕</button>
             </div>
-            {getBarcodes(selectedBarcodeItem).length ? <ul className="max-h-72 space-y-2 overflow-auto">{getBarcodes(selectedBarcodeItem).map((barcode) => <li key={barcode} className="rounded-lg border bg-gray-50 px-4 py-3 font-mono text-lg">{barcode}</li>)}</ul> : <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">No barcode is available for this item.</p>}
+            {getBarcodeDetails(selectedBarcodeItem).length ? (
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full min-w-[520px] text-left text-sm">
+                  <thead className="bg-gray-50 text-gray-600"><tr><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">Stock date</th><th className="px-3 py-2">Quantity</th><th className="px-3 py-2">Unit</th><th className="px-3 py-2">Rate</th></tr></thead>
+                  <tbody>{getBarcodeDetails(selectedBarcodeItem).map((detail, index) => <tr key={`${detail.barcode}-${index}`} className="border-t"><td className="px-3 py-2 font-mono">{detail.barcode}</td><td className="px-3 py-2">{formatBarcodeDate(detail.date)}</td><td className="px-3 py-2">{detail.quantity ?? "-"}</td><td className="px-3 py-2">{detail.ac_unit || "-"}</td><td className="px-3 py-2">{detail.unit_price ?? detail.rate ?? "-"}</td></tr>)}</tbody>
+                </table>
+              </div>
+            ) : <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">No barcode is available for this item.</p>}
           </section>
         </div>
       )}

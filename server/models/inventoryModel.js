@@ -695,7 +695,16 @@ const getStockInReport = async ({ fromDate, toDate, search, limit, offset }) => 
     SELECT
       XIT.ITEM_CODE AS item_code,
       XI.ITEM_NAME AS item_name,
-      GROUP_CONCAT(DISTINCT NULLIF(TRIM(XIT.BARCODE), '') ORDER BY XIT.BARCODE SEPARATOR ',') AS barcodes,
+      JSON_ARRAYAGG(CASE WHEN NULLIF(TRIM(XIT.BARCODE), '') IS NOT NULL THEN JSON_OBJECT(
+        'barcode', XIT.BARCODE,
+        'date', DATE_FORMAT(XIT.TRANSACTION_DATE, '%Y-%m-%d'),
+        'created_at', DATE_FORMAT(XIT.CREATION_DATE, '%Y-%m-%d %H:%i:%s'),
+        'quantity', XIT.STOCK,
+        'pegs', XIT.PEGS,
+        'rate', XIT.RATE,
+        'ac_unit', XIT.\`A/C_UNIT\`,
+        'batch', XIT.BATCH_NAME
+      ) END) AS barcode_details,
       COALESCE(NULLIF(XI.\`A/C_UNIT\`, ''), 'Nos') AS ac_unit,
       SUM(XIT.STOCK) AS stock,
       ROUND(SUM(IFNULL(XIT.RATE, 0)), 2) AS total_price,
@@ -750,7 +759,15 @@ const getStockOutReport = async ({ fromDate, toDate, search, limit, offset }) =>
     SELECT
       XSO.ITEM_CODE AS item_code,
       XSO.ITEM_NAME AS item_name,
-      GROUP_CONCAT(DISTINCT NULLIF(TRIM(XSO.BARCODE), '') ORDER BY XSO.BARCODE SEPARATOR ',') AS barcodes,
+      JSON_ARRAYAGG(CASE WHEN NULLIF(TRIM(XSO.BARCODE), '') IS NOT NULL THEN JSON_OBJECT(
+        'barcode', XSO.BARCODE,
+        'date', DATE_FORMAT(XSO.CREATION_DATE, '%Y-%m-%d'),
+        'created_at', DATE_FORMAT(XSO.CREATION_DATE, '%Y-%m-%d %H:%i:%s'),
+        'quantity', XSO.STOCK_QUANTITY,
+        'pegs', XSO.PEGS,
+        'unit_price', XSO.UNIT_PRICE,
+        'ac_unit', XSO.\`A/C_UNIT\`
+      ) END) AS barcode_details,
       SUM(XSO.STOCK_QUANTITY) AS stock,
       ROUND(SUM(
         CASE
