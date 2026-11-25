@@ -378,7 +378,7 @@ export default function BarstockReports() {
       </div>
       {selectedBarcodeItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation" onClick={() => setSelectedBarcodeItem(null)}>
-          <section role="dialog" aria-modal="true" aria-labelledby="stock-barcode-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+          <section role="dialog" aria-modal="true" aria-labelledby="stock-barcode-title" className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
             <div className="mb-4 flex items-start justify-between gap-4">
               <div><h2 id="stock-barcode-title" className="text-xl font-semibold text-afmc-maroon">Item barcodes</h2><p className="text-sm text-gray-600">{toInitCap(selectedBarcodeItem.item_name)} ({selectedBarcodeItem.item_code})</p></div>
               <button type="button" onClick={() => setSelectedBarcodeItem(null)} className="rounded-lg px-3 py-1 text-gray-600 hover:bg-gray-100" aria-label="Close">✕</button>
