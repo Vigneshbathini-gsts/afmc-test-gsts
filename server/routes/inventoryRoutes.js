@@ -16,6 +16,7 @@ router.get(
 router.use(requireRole(10, 80));
 
 router.get("/", inventoryController.getInventory);
+router.get("/history/:itemCode", inventoryController.getItemStockHistory);
 router.get("/categories", inventoryController.getCategories);
 router.get("/items", inventoryController.getItems); 
 router.get("/subcategories", inventoryController.getSubCategories);

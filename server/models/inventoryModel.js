@@ -80,6 +80,34 @@ const getInventoryList = async (filters) => {
   return rows;
 };
 
+const getItemStockHistory = async ({ itemCode, limit = 30, offset = 0 }) => {
+  const safeLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 30));
+  const safeOffset = Math.max(0, Number.parseInt(offset, 10) || 0);
+  const sql = `
+    SELECT
+      TRANSACTION_ID AS transaction_id,
+      ITEM_CODE AS item_code,
+      DATE_FORMAT(TRANSACTION_DATE, '%d/%m/%Y') AS transaction_date,
+      DATE_FORMAT(CREATION_DATE, '%d/%m/%Y %h:%i %p') AS recorded_at,
+      FLAG AS transaction_type,
+      STOCK AS quantity,
+      RATE AS rate,
+      TOTAL_VALUE AS total_value,
+      PEGS AS pegs,
+      VOLUME AS volume,
+      BATCH_NAME AS batch_name,
+      BATCH_ID AS batch_id,
+      BARCODE AS barcode,
+      CREATED_BY AS created_by
+    FROM xxafmc_items_transactions
+    WHERE ITEM_CODE = ?
+    ORDER BY CREATION_DATE DESC, TRANSACTION_DATE DESC, TRANSACTION_ID DESC
+    LIMIT ${safeLimit} OFFSET ${safeOffset}
+  `;
+  const [rows] = await db.execute(sql, [Number(itemCode)]);
+  return rows;
+};
+
 const getCategories = async () => {
   const sql = `
     SELECT DISTINCT
@@ -695,6 +723,16 @@ const getStockInReport = async ({ fromDate, toDate, search, limit, offset }) => 
     SELECT
       XIT.ITEM_CODE AS item_code,
       XI.ITEM_NAME AS item_name,
+      JSON_ARRAYAGG(CASE WHEN NULLIF(TRIM(XIT.BARCODE), '') IS NOT NULL THEN JSON_OBJECT(
+        'barcode', XIT.BARCODE,
+        'date', DATE_FORMAT(XIT.TRANSACTION_DATE, '%Y-%m-%d'),
+        'created_at', DATE_FORMAT(XIT.CREATION_DATE, '%Y-%m-%d %H:%i:%s'),
+        'quantity', XIT.STOCK,
+        'pegs', XIT.PEGS,
+        'rate', XIT.RATE,
+        'ac_unit', XIT.\`A/C_UNIT\`,
+        'batch', XIT.BATCH_NAME
+      ) END) AS barcode_details,
       COALESCE(NULLIF(XI.\`A/C_UNIT\`, ''), 'Nos') AS ac_unit,
       SUM(XIT.STOCK) AS stock,
       ROUND(SUM(IFNULL(XIT.RATE, 0)), 2) AS total_price,
@@ -749,6 +787,16 @@ const getStockOutReport = async ({ fromDate, toDate, search, limit, offset }) =>
     SELECT
       XSO.ITEM_CODE AS item_code,
       XSO.ITEM_NAME AS item_name,
+      JSON_ARRAYAGG(CASE WHEN NULLIF(TRIM(XSO.BARCODE), '') IS NOT NULL THEN JSON_OBJECT(
+        'barcode', XSO.BARCODE,
+        'date', DATE_FORMAT(XSO.CREATION_DATE, '%Y-%m-%d'),
+        'created_at', DATE_FORMAT(XSO.CREATION_DATE, '%Y-%m-%d %H:%i:%s'),
+        'quantity', XSO.STOCK_QUANTITY,
+        'pegs', XSO.PEGS,
+        'unit_price', XSO.UNIT_PRICE,
+        'ac_unit', XSO.\`A/C_UNIT\`,
+        'batch', XSO.BATCH_NAME
+      ) END) AS barcode_details,
       SUM(XSO.STOCK_QUANTITY) AS stock,
       ROUND(SUM(
         CASE
@@ -847,6 +895,7 @@ const updateItemStatus = async (itemCode, status) => {
 
 module.exports = {
   getInventoryList,
+  getItemStockHistory,
   getCategories,
   getItems,
   getSubCategories,

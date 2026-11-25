@@ -21,6 +21,22 @@ exports.getInventory = async (req, res) => {
   }
 };
 
+exports.getItemStockHistory = async (req, res) => {
+  try {
+    const itemCode = Number(req.params.itemCode);
+    if (!Number.isInteger(itemCode) || itemCode <= 0) {
+      return res.status(400).json({ success: false, message: "Valid item code is required" });
+    }
+    const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 30));
+    const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
+    const data = await inventoryModel.getItemStockHistory({ itemCode, limit, offset });
+    res.status(200).json({ success: true, data, hasMore: data.length === limit });
+  } catch (error) {
+    console.error("Error fetching item stock history:", error);
+    res.status(500).json({ success: false, message: "Failed to load item stock history" });
+  }
+};
+
 exports.getCategories = async (_req, res) => {
   try {
     const categories = await inventoryModel.getCategories();

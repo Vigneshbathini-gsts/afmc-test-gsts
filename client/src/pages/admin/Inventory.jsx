@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FaArrowLeft, FaChevronDown, FaSearch, FaPen } from "react-icons/fa";
+import { FaArrowLeft, FaChevronDown, FaSearch, FaPen, FaHistory } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import { inventoryAPI } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
@@ -149,6 +149,12 @@ export default function Inventory() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showStockModal, setShowStockModal] = useState(false);
   const [selectedStockItem, setSelectedStockItem] = useState(null);
+  const [historyItem, setHistoryItem] = useState(null);
+  const [historyRows, setHistoryRows] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyError, setHistoryError] = useState("");
   const [showImageModal, setShowImageModal] = useState(false);
   const [isAddCategoryDropdownOpen, setIsAddCategoryDropdownOpen] = useState(false);
   const [subCategoryFilter, setSubCategoryFilter] = useState("");
@@ -185,6 +191,45 @@ export default function Inventory() {
   const inventoryRowsRef = useRef([]);
   const hasMoreRef = useRef(true);
   const pageRef = useRef(0);
+
+  const openItemHistory = async (row) => {
+    setHistoryItem(row);
+    setHistoryRows([]);
+    setHistoryOffset(0);
+    setHistoryHasMore(false);
+    setHistoryError("");
+    setHistoryLoading(true);
+    try {
+      const response = await inventoryAPI.getStockHistory(row.item_code, { limit: 30, offset: 0 });
+      const rows = response.data.data || [];
+      setHistoryRows(rows);
+      setHistoryOffset(rows.length);
+      setHistoryHasMore(Boolean(response.data.hasMore));
+    } catch (err) {
+      console.error("Failed to load item stock history:", err);
+      setHistoryError(err.response?.data?.message || "Failed to load item history.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const loadMoreHistory = async () => {
+    if (!historyItem || historyLoading || !historyHasMore) return;
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const response = await inventoryAPI.getStockHistory(historyItem.item_code, { limit: 30, offset: historyOffset });
+      const rows = response.data.data || [];
+      setHistoryRows((current) => [...current, ...rows]);
+      setHistoryOffset((current) => current + rows.length);
+      setHistoryHasMore(Boolean(response.data.hasMore));
+    } catch (err) {
+      console.error("Failed to load more item stock history:", err);
+      setHistoryError(err.response?.data?.message || "Failed to load more item history.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const fetchCategories = async () => {
     try {
@@ -1023,29 +1068,37 @@ export default function Inventory() {
                     <tr>
                       <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Add Stock</th>
                       <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Update Image</th>
-                    {isColumnVisible("itemName") && <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Item Name</th>}
-                    {isColumnVisible("unit") && <th className="px-3 py-3 text-left font-medium whitespace-nowrap">A/C Unit</th>}
-                    {isColumnVisible("stock") && <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Stock</th>}
-                    {isColumnVisible("status") && <th className="px-10 py-3 text-left font-medium whitespace-nowrap">Status</th>}
+                      {isColumnVisible("itemName") && <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Item Name</th>}
+                      {isColumnVisible("unit") && <th className="px-3 py-3 text-left font-medium whitespace-nowrap">A/C Unit</th>}
+                      {isColumnVisible("stock") && <th className="px-3 py-3 text-left font-medium whitespace-nowrap">Stock</th>}
+                      {isColumnVisible("status") && <th className="px-10 py-3 text-left font-medium whitespace-nowrap">Status</th>}
+                      <th className="px-3 py-3 text-left font-medium whitespace-nowrap">History</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
                       <tr>
-                      <td colSpan={2 + actionColumns.filter(({ visible }) => visible).length} className="px-4 py-6 text-center text-gray-500">
+                        <td
+                          colSpan={3 + actionColumns.filter(({ visible }) => visible).length}
+                          className="px-4 py-6 text-center text-gray-500"
+                        >
                           Loading inventory...
                         </td>
                       </tr>
                     ) : inventory.length === 0 ? (
                       <tr>
-                      <td colSpan={2 + actionColumns.filter(({ visible }) => visible).length} className="px-4 py-6 text-center text-gray-500">
+                        <td
+                          colSpan={3 + actionColumns.filter(({ visible }) => visible).length}
+                          className="px-4 py-6 text-center text-gray-500"
+                        >
                           No items found.
                         </td>
                       </tr>
                     ) : (
-                    currentInventory.map((row) => {
+                      currentInventory.map((row) => {
                         const isActive = row.status?.toLowerCase() === "active";
                         return (
+                          
                           <tr
                             key={row.item_id}
                             className={`border-t border-gray-100 transition-colors ${
@@ -1082,12 +1135,19 @@ export default function Inventory() {
                                 <FaPen />
                               </button>
                             </td>
-                            {isColumnVisible("itemName") && <td className="px-4 py-3 font-medium text-gray-800">
-                              {toInitCap(row.item_name)}
-                            </td>}
-                            {isColumnVisible("unit") && <td className="px-4 py-3 text-gray-700">{row.ac_unit}</td>}
-                            {isColumnVisible("stock") && <td className="px-4 py-3 text-gray-700">{row.stock_quantity}</td>}
-                            {isColumnVisible("status") && <td className="px-4 py-3">
+                            {isColumnVisible("itemName") && (
+                              <td className="px-4 py-3 font-medium text-gray-800">
+                                {toInitCap(row.item_name)}
+                              </td>
+                            )}
+                            {isColumnVisible("unit") && (
+                              <td className="px-4 py-3 text-gray-700">{row.ac_unit}</td>
+                            )}
+                            {isColumnVisible("stock") && (
+                              <td className="px-4 py-3 text-gray-700">{row.stock_quantity}</td>
+                            )}
+                            {isColumnVisible("status") && (
+                              <td className="px-4 py-3">
                               <button
                                 onClick={() => handleActiveStatusChange(row)}
                                 className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all duration-300 shadow-sm hover:shadow-lg ${
@@ -1108,7 +1168,18 @@ export default function Inventory() {
                                   </>
                                 )}
                               </button>
-                            </td>}
+                              </td>
+                            )}
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() => openItemHistory(row)}
+                                className="inline-flex items-center gap-2 rounded-full border border-afmc-maroon/20 px-3 py-2 text-sm font-medium text-afmc-maroon hover:bg-afmc-maroon/5"
+                                title={`View ${row.item_name} stock history`}
+                              >
+                                <FaHistory />
+                              </button>
+                            </td>
                           </tr>
                         );
                       })
@@ -1169,6 +1240,38 @@ export default function Inventory() {
           onClose={closeStockModal}
           onStockAdded={fetchInventory}
         />
+      )}
+
+      {historyItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-6" role="presentation" onClick={() => setHistoryItem(null)}>
+          <section role="dialog" aria-modal="true" aria-labelledby="inventory-history-title" className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 border-b p-5">
+              <div>
+                <h2 id="inventory-history-title" className="text-xl font-semibold text-afmc-maroon">Stock and transaction history</h2>
+                <p className="mt-1 text-sm text-gray-600">{toInitCap(historyItem.item_name)} ({historyItem.item_code}) · Current stock: {historyItem.stock_quantity ?? 0} {historyItem.ac_unit || ""}</p>
+              </div>
+              <button type="button" onClick={() => setHistoryItem(null)} className="rounded-lg px-3 py-1 text-gray-600 hover:bg-gray-100" aria-label="Close history">X</button>
+            </div>
+            {historyError && <p className="mx-5 mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{historyError}</p>}
+            <div className="flex-1 overflow-auto p-5">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead className="sticky top-0 bg-gray-50 text-gray-600"><tr><th className="px-3 py-3">Transaction date</th><th className="px-3 py-3">Type</th><th className="px-3 py-3">Quantity</th><th className="px-3 py-3">Rate</th><th className="px-3 py-3">Barcode</th><th className="px-3 py-3">Batch</th><th className="px-3 py-3">Entered by</th></tr></thead>
+                <tbody>
+                  {historyRows.map((entry, index) => <tr key={`${entry.transaction_id}-${index}`} className="border-t border-gray-100"><td className="px-3 py-3">{entry.transaction_date || "-"}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${String(entry.transaction_type).toUpperCase() === "IN" ? "bg-green-50 text-green-700" : "bg-orange-50 text-orange-700"}`}>{entry.transaction_type || "-"}</span></td><td className="px-3 py-3">{entry.quantity ?? 0}</td><td className="px-3 py-3">{entry.rate ?? "-"}</td><td className="px-3 py-3 font-mono">{entry.barcode || "-"}</td><td className="px-3 py-3">{entry.batch_name || entry.batch_id || "-"}</td><td className="px-3 py-3">{entry.created_by || "-"}</td></tr>)}
+                  {!historyLoading && historyRows.length === 0 && <tr><td colSpan="7" className="px-4 py-8 text-center text-gray-500">No stock transactions found for this item.</td></tr>}
+                </tbody>
+              </table>
+              {historyLoading && <p className="py-4 text-center text-gray-500">Loading history...</p>}
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t p-4">
+              <span className="text-sm text-gray-500">{historyRows.length} transaction{historyRows.length === 1 ? "" : "s"} loaded</span>
+              <div className="flex gap-2">
+                {historyHasMore && <button type="button" onClick={loadMoreHistory} disabled={historyLoading} className="rounded-xl bg-afmc-maroon px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{historyLoading ? "Loading..." : "Load more"}</button>}
+                <button type="button" onClick={() => setHistoryItem(null)} className="rounded-xl border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Close</button>
+              </div>
+            </div>
+          </section>
+        </div>
       )}
 
       {showAddModal && (

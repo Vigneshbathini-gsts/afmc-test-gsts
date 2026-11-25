@@ -43,6 +43,35 @@ const STOCK_REPORT_COLUMNS = [
   { key: "totalPrice", label: "Total Price" },
 ];
 
+const getBarcodeDetails = (item) => {
+  const raw = item?.barcode_details ?? item?.BARCODE_DETAILS;
+  if (Array.isArray(raw)) return raw.filter((entry) => entry?.barcode);
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.filter((entry) => entry?.barcode);
+    } catch (_) {
+      // Use the legacy barcode list if detailed data is unavailable.
+    }
+  }
+  return String(item?.barcodes ?? item?.BARCODES ?? item?.barcode ?? item?.BARCODE ?? "")
+    .split(",").map((barcode) => barcode.trim()).filter(Boolean).map((barcode) => ({ barcode }));
+};
+
+const formatBarcodeDate = (value) => {
+  if (!value) return "-";
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}):(\d{2}))?/);
+  if (match) {
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4] || 0), Number(match[5] || 0), Number(match[6] || 0)));
+    const options = { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit" };
+    if (match[4] !== undefined) Object.assign(options, { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true });
+    const formatted = new Intl.DateTimeFormat("en-IN", options).format(date);
+    return match[4] !== undefined ? `${formatted} IST` : formatted;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+};
+
 export default function StockReports() {
   const navigate = useNavigate();
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -63,6 +92,7 @@ export default function StockReports() {
   const [stockOutPage, setStockOutPage] = useState(0);
   const [stockInHasMore, setStockInHasMore] = useState(true);
   const [stockOutHasMore, setStockOutHasMore] = useState(true);
+  const [selectedBarcodeItem, setSelectedBarcodeItem] = useState(null);
   const requestInFlight = useRef(false);
   const searchTermRef = useRef("");
 
@@ -206,6 +236,7 @@ export default function StockReports() {
   ].filter(isColumnVisible).length;
   const hasVisibleSummaryValue =
     isColumnVisible("stock") || isColumnVisible("totalPrice");
+  const selectedBarcodeDetails = getBarcodeDetails(selectedBarcodeItem);
 
   const fetchAllReportRows = async () => {
     if (!rows || rows.length === 0) return;
@@ -490,6 +521,8 @@ export default function StockReports() {
                     <tr key={`${row.item_code}-${idx}`} className="border-t border-gray-100">
                       {isColumnVisible("itemCode") && <td className="px-4 py-3">{row.item_code}</td>}
                       {isColumnVisible("itemName") && <td className="px-4 py-3">{toInitCap(row.item_name)}</td>}
+                      <td className="px-4 py-3">{row.item_code}</td>
+                      <td className="px-4 py-3"><button type="button" className="text-left text-afmc-maroon hover:underline" onClick={() => setSelectedBarcodeItem(row)}>{toInitCap(row.item_name)}</button></td>
                       {/* {activeTab === "in" && (
                         <td className="px-4 py-3">{row.batch_id || "-"}</td>
                       )} */}
@@ -582,6 +615,24 @@ export default function StockReports() {
           </div>
         </div>
       </div>
+      {selectedBarcodeItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation" onClick={() => setSelectedBarcodeItem(null)}>
+          <section role="dialog" aria-modal="true" aria-labelledby="report-barcode-title" className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div><h2 id="report-barcode-title" className="text-xl font-semibold text-afmc-maroon">Item barcodes</h2><p className="text-sm text-gray-600">{toInitCap(selectedBarcodeItem.item_name)} ({selectedBarcodeItem.item_code})</p></div>
+              <button type="button" onClick={() => setSelectedBarcodeItem(null)} className="rounded-lg px-3 py-1 text-gray-600 hover:bg-gray-100" aria-label="Close">X</button>
+            </div>
+            {selectedBarcodeDetails.length ? (
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full min-w-[600px] text-left text-sm">
+                  <thead className="bg-gray-50 text-gray-600"><tr><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">Stock date</th><th className="px-3 py-2">Quantity</th><th className="px-3 py-2">Unit</th><th className="px-3 py-2">Rate</th><th className="px-3 py-2">Batch</th></tr></thead>
+                  <tbody>{selectedBarcodeDetails.map((detail, index) => <tr key={`${detail.barcode}-${index}`} className="border-t"><td className="px-3 py-2 font-mono">{detail.barcode}</td><td className="px-3 py-2">{formatBarcodeDate(detail.date)}</td><td className="px-3 py-2">{detail.quantity ?? "-"}</td><td className="px-3 py-2">{detail.ac_unit || "-"}</td><td className="px-3 py-2">{detail.unit_price ?? detail.rate ?? "-"}</td><td className="px-3 py-2">{detail.batch || detail.batch_id || "-"}</td></tr>)}</tbody>
+                </table>
+              </div>
+            ) : <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">No barcode is available for this item.</p>}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

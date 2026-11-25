@@ -213,6 +213,7 @@ export const itemAPI = {
 // ================================
 export const inventoryAPI = {
   getAll: (params) => api.get("/inventory", { params }),
+  getStockHistory: (itemCode, params) => api.get(`/inventory/history/${itemCode}`, { params }),
   getCategories: () => api.get("/inventory/categories"),
   getItems: (params) => api.get("/inventory/items", { params }),
   getSubCategories: (params) => api.get("/inventory/subcategories", { params }),
