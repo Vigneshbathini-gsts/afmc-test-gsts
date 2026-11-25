@@ -40,6 +40,7 @@ stock_summary AS (
     SELECT
         xso.ITEM_CODE,
         MAX(xso.ITEM_NAME) AS ITEM_NAME,
+        GROUP_CONCAT(DISTINCT NULLIF(TRIM(xso.BARCODE), '') ORDER BY xso.BARCODE SEPARATOR ',') AS BARCODES,
         SUM(IFNULL(xso.STOCK_QUANTITY,0)) AS STOCK_QUANTITY,
         MAX(xso.PEGS) AS PEGS,
         MAX(inv.\`A/C_UNIT\`) AS A_C_UNIT,
@@ -67,6 +68,7 @@ reserved_summary AS (
 SELECT
     ss.ITEM_CODE AS item_code,
     ss.ITEM_NAME AS item_name,
+    ss.BARCODES AS barcodes,
 
     ss.STOCK_QUANTITY AS stock_quantity,
     COALESCE(ss.INVENTORY_STOCK_QUANTITY, 0) AS inventory_stock,

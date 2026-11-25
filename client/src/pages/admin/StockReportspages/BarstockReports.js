@@ -22,6 +22,13 @@ export default function BarstockReports() {
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [selectedBarcodeItem, setSelectedBarcodeItem] = useState(null);
+
+  const getBarcodes = (item) =>
+    String(item?.barcodes ?? item?.BARCODES ?? item?.barcode ?? item?.BARCODE ?? "")
+      .split(",")
+      .map((barcode) => barcode.trim())
+      .filter(Boolean);
 
   const getAcUnitLabel = useCallback((row) => {
     const value =
@@ -306,7 +313,9 @@ export default function BarstockReports() {
                       >
                         <td className="px-4 py-3">{item.item_code}</td>
                         <td className="px-4 py-3 capitalize">
-                          {toInitCap(item.item_name)}
+                          <button type="button" className="text-left text-afmc-maroon hover:underline" onClick={() => setSelectedBarcodeItem(item)}>
+                            {toInitCap(item.item_name)}
+                          </button>
                         </td>
                         <td className="px-4 py-3">{getAcUnitLabel(item)}</td>
                         <td className="px-4 py-3">{item.stock_quantity ?? item.STOCK_QUANTITY ?? 0}</td>
@@ -344,6 +353,17 @@ export default function BarstockReports() {
           </div>
         </div>
       </div>
+      {selectedBarcodeItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation" onClick={() => setSelectedBarcodeItem(null)}>
+          <section role="dialog" aria-modal="true" aria-labelledby="stock-barcode-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div><h2 id="stock-barcode-title" className="text-xl font-semibold text-afmc-maroon">Item barcodes</h2><p className="text-sm text-gray-600">{toInitCap(selectedBarcodeItem.item_name)} ({selectedBarcodeItem.item_code})</p></div>
+              <button type="button" onClick={() => setSelectedBarcodeItem(null)} className="rounded-lg px-3 py-1 text-gray-600 hover:bg-gray-100" aria-label="Close">✕</button>
+            </div>
+            {getBarcodes(selectedBarcodeItem).length ? <ul className="max-h-72 space-y-2 overflow-auto">{getBarcodes(selectedBarcodeItem).map((barcode) => <li key={barcode} className="rounded-lg border bg-gray-50 px-4 py-3 font-mono text-lg">{barcode}</li>)}</ul> : <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">No barcode is available for this item.</p>}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

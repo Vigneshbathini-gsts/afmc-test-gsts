@@ -50,6 +50,7 @@ export default function StockReports() {
   const [stockOutPage, setStockOutPage] = useState(0);
   const [stockInHasMore, setStockInHasMore] = useState(true);
   const [stockOutHasMore, setStockOutHasMore] = useState(true);
+  const [selectedBarcodeItem, setSelectedBarcodeItem] = useState(null);
   const requestInFlight = useRef(false);
   const searchTermRef = useRef("");
 
@@ -137,6 +138,8 @@ export default function StockReports() {
   const rows = activeTab === "in" ? stockInRows : stockOutRows;
   const hasMore = activeTab === "in" ? stockInHasMore : stockOutHasMore;
   const summary = activeTab === "in" ? stockInSummary : stockOutSummary;
+  const selectedBarcodes = String(selectedBarcodeItem?.barcodes ?? selectedBarcodeItem?.BARCODES ?? selectedBarcodeItem?.barcode ?? selectedBarcodeItem?.BARCODE ?? "")
+    .split(",").map((barcode) => barcode.trim()).filter(Boolean);
 
   const handleReportScroll = (event) => {
     const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
@@ -406,7 +409,7 @@ export default function StockReports() {
                   rows.map((row, idx) => (
                     <tr key={`${row.item_code}-${idx}`} className="border-t border-gray-100">
                       <td className="px-4 py-3">{row.item_code}</td>
-                      <td className="px-4 py-3">{toInitCap(row.item_name)}</td>
+                      <td className="px-4 py-3"><button type="button" className="text-left text-afmc-maroon hover:underline" onClick={() => setSelectedBarcodeItem(row)}>{toInitCap(row.item_name)}</button></td>
                       {/* {activeTab === "in" && (
                         <td className="px-4 py-3">{row.batch_id || "-"}</td>
                       )} */}
@@ -446,6 +449,17 @@ export default function StockReports() {
           </div>
         </div>
       </div>
+      {selectedBarcodeItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation" onClick={() => setSelectedBarcodeItem(null)}>
+          <section role="dialog" aria-modal="true" aria-labelledby="report-barcode-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div><h2 id="report-barcode-title" className="text-xl font-semibold text-afmc-maroon">Item barcodes</h2><p className="text-sm text-gray-600">{toInitCap(selectedBarcodeItem.item_name)} ({selectedBarcodeItem.item_code})</p></div>
+              <button type="button" onClick={() => setSelectedBarcodeItem(null)} className="rounded-lg px-3 py-1 text-gray-600 hover:bg-gray-100" aria-label="Close">X</button>
+            </div>
+            {selectedBarcodes.length ? <ul className="max-h-72 space-y-2 overflow-auto">{selectedBarcodes.map((barcode) => <li key={barcode} className="rounded-lg border bg-gray-50 px-4 py-3 font-mono text-lg">{barcode}</li>)}</ul> : <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">No barcode is available for this item.</p>}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
