@@ -51,13 +51,6 @@ const buildBatchId = (itemName, transactionDate, sequence) => {
   return `${normalizedName}-${normalizedDate}-${String(sequence).padStart(3, "0")}`;
 };
 
-const incrementBatchId = (batchId, offset) => {
-  const match = String(batchId || "").match(/^(.*-)(\d+)$/);
-  if (!match) return batchId;
-  const nextSequence = Number(match[2]) + offset;
-  return `${match[1]}${String(nextSequence).padStart(match[2].length, "0")}`;
-};
-
 const buildInitialStockForm = (item) => ({
   itemCode: item?.item_code || "",
   itemName: item?.item_name || "",
@@ -93,18 +86,6 @@ export default function AddStockModal({
   const [stockRowSearch, setStockRowSearch] = useState("");
   const [generatedBatchId, setGeneratedBatchId] = useState("");
 
-  const nextBatchSequence = useMemo(() => {
-    const currentItem = String(stockForm.itemCode || "");
-    const currentDate = String(stockForm.transactionDate || "");
-    return (
-      stockRows.filter(
-        (row) =>
-          String(row.itemCode || "") === currentItem &&
-          String(row.transactionDate || "") === currentDate
-      ).length + 1
-    );
-  }, [stockForm.itemCode, stockForm.transactionDate, stockRows]);
-
   useEffect(() => {
     let cancelled = false;
 
@@ -121,12 +102,12 @@ export default function AddStockModal({
         });
         if (!cancelled) {
           const backendBatchId = response.data?.data?.batchId || "";
-          setGeneratedBatchId(incrementBatchId(backendBatchId, nextBatchSequence - 1));
+          setGeneratedBatchId(backendBatchId);
         }
       } catch (err) {
         console.error("Failed to generate batch ID:", err);
         if (!cancelled) {
-          setGeneratedBatchId(buildBatchId(stockForm.itemName, stockForm.transactionDate, nextBatchSequence));
+          setGeneratedBatchId(buildBatchId(stockForm.itemName, stockForm.transactionDate, 1));
         }
       }
     };
@@ -135,7 +116,7 @@ export default function AddStockModal({
     return () => {
       cancelled = true;
     };
-  }, [nextBatchSequence, stockForm.itemCode, stockForm.itemName, stockForm.transactionDate]);
+  }, [stockForm.itemCode, stockForm.itemName, stockForm.transactionDate]);
 
   const closeStockModal = () => {
     setStockError("");
@@ -234,7 +215,7 @@ export default function AddStockModal({
     const quantityLabel = isBatchWiseItem(stockForm.subCategoryId)
       ? "Quantity"
       : "No of Pegs/Quantity";
-    const batchId = generatedBatchId || buildBatchId(stockForm.itemName, stockForm.transactionDate, nextBatchSequence);
+    const batchId = generatedBatchId || buildBatchId(stockForm.itemName, stockForm.transactionDate, 1);
 
     setStockRows((current) => [
       ...current,
@@ -264,7 +245,7 @@ export default function AddStockModal({
     setStockInfo("Stock row staged.");
     toast.success("Stock row staged.");
     setStockForm((prev) => ({ ...prev, barcode: "" }));
-  }, [generatedBatchId, nextBatchSequence, stockForm, stockRows]);
+  }, [generatedBatchId, stockForm, stockRows]);
 
   const handleStageStock = async () => {
     await stageStockRow(stockForm.barcode);

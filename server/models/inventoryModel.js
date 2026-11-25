@@ -794,7 +794,8 @@ const getStockOutReport = async ({ fromDate, toDate, search, limit, offset }) =>
         'quantity', XSO.STOCK_QUANTITY,
         'pegs', XSO.PEGS,
         'unit_price', XSO.UNIT_PRICE,
-        'ac_unit', XSO.\`A/C_UNIT\`
+        'ac_unit', XSO.\`A/C_UNIT\`,
+        'batch', XSO.BATCH_NAME
       ) END) AS barcode_details,
       SUM(XSO.STOCK_QUANTITY) AS stock,
       ROUND(SUM(

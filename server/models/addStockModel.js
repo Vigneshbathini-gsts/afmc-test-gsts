@@ -170,6 +170,8 @@ const addStockTransactions = async (payload) => {
 
     let nextId = await getTransactionNextId(connection);
 
+    const batchIdsByItemAndDate = new Map();
+
     for (const item of items) {
       const {
         itemCode,
@@ -224,10 +226,15 @@ const addStockTransactions = async (payload) => {
         throw error;
       }
 
-      const batchId = await getNextBatchId(
-        { itemCode, transactionDate: normalizedTransactionDate },
-        connection
-      );
+      const batchKey = `${Number(itemCode)}:${normalizedTransactionDate}`;
+      let batchId = batchIdsByItemAndDate.get(batchKey);
+      if (!batchId) {
+        batchId = await getNextBatchId(
+          { itemCode, transactionDate: normalizedTransactionDate },
+          connection
+        );
+        batchIdsByItemAndDate.set(batchKey, batchId);
+      }
       const batchName = batchId;
 
       await connection.execute(

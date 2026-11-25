@@ -486,9 +486,9 @@ export default function StockReports() {
             </div>
             {selectedBarcodeDetails.length ? (
               <div className="overflow-x-auto rounded-lg border">
-                <table className="w-full min-w-[520px] text-left text-sm">
+                <table className="w-full min-w-[600px] text-left text-sm">
                   <thead className="bg-gray-50 text-gray-600"><tr><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">Stock date</th><th className="px-3 py-2">Quantity</th><th className="px-3 py-2">Unit</th><th className="px-3 py-2">Rate</th><th className="px-3 py-2">Batch</th></tr></thead>
-                  <tbody>{selectedBarcodeDetails.map((detail, index) => <tr key={`${detail.barcode}-${index}`} className="border-t"><td className="px-3 py-2 font-mono">{detail.barcode}</td><td className="px-3 py-2">{formatBarcodeDate(detail.date)}</td><td className="px-3 py-2">{detail.quantity ?? "-"}</td><td className="px-3 py-2">{detail.ac_unit || "-"}</td><td className="px-3 py-2">{detail.unit_price ?? detail.rate ?? "-"}</td><td className="px-3 py-2">{detail.batch || "-"}</td></tr>)}</tbody>
+                  <tbody>{selectedBarcodeDetails.map((detail, index) => <tr key={`${detail.barcode}-${index}`} className="border-t"><td className="px-3 py-2 font-mono">{detail.barcode}</td><td className="px-3 py-2">{formatBarcodeDate(detail.date)}</td><td className="px-3 py-2">{detail.quantity ?? "-"}</td><td className="px-3 py-2">{detail.ac_unit || "-"}</td><td className="px-3 py-2">{detail.unit_price ?? detail.rate ?? "-"}</td><td className="px-3 py-2">{detail.batch || detail.batch_id || "-"}</td></tr>)}</tbody>
                 </table>
               </div>
             ) : <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">No barcode is available for this item.</p>}
