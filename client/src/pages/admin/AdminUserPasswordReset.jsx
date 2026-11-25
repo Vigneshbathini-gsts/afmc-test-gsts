@@ -68,12 +68,21 @@ export default function AdminUserPasswordReset() {
         newPassword,
         confirmPassword,
       });
+      if (response.data?.success !== true) {
+        const message =
+          response.data?.message || "Unable to reset user password.";
+        setError(message);
+        toast.error(message);
+        return;
+      }
+
       const message =
         response.data?.message || "User password reset successfully.";
       setSuccess(message);
       toast.success(message);
       setNewPassword("");
       setConfirmPassword("");
+      navigate("/admin/users");
     } catch (resetError) {
       const message =
         resetError.response?.data?.message || "Unable to reset user password.";
