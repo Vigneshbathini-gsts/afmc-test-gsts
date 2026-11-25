@@ -80,6 +80,34 @@ const getInventoryList = async (filters) => {
   return rows;
 };
 
+const getItemStockHistory = async ({ itemCode, limit = 30, offset = 0 }) => {
+  const safeLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 30));
+  const safeOffset = Math.max(0, Number.parseInt(offset, 10) || 0);
+  const sql = `
+    SELECT
+      TRANSACTION_ID AS transaction_id,
+      ITEM_CODE AS item_code,
+      DATE_FORMAT(TRANSACTION_DATE, '%d/%m/%Y') AS transaction_date,
+      DATE_FORMAT(CREATION_DATE, '%d/%m/%Y %h:%i %p') AS recorded_at,
+      FLAG AS transaction_type,
+      STOCK AS quantity,
+      RATE AS rate,
+      TOTAL_VALUE AS total_value,
+      PEGS AS pegs,
+      VOLUME AS volume,
+      BATCH_NAME AS batch_name,
+      BATCH_ID AS batch_id,
+      BARCODE AS barcode,
+      CREATED_BY AS created_by
+    FROM xxafmc_items_transactions
+    WHERE ITEM_CODE = ?
+    ORDER BY CREATION_DATE DESC, TRANSACTION_DATE DESC, TRANSACTION_ID DESC
+    LIMIT ${safeLimit} OFFSET ${safeOffset}
+  `;
+  const [rows] = await db.execute(sql, [Number(itemCode)]);
+  return rows;
+};
+
 const getCategories = async () => {
   const sql = `
     SELECT DISTINCT
@@ -866,6 +894,7 @@ const updateItemStatus = async (itemCode, status) => {
 
 module.exports = {
   getInventoryList,
+  getItemStockHistory,
   getCategories,
   getItems,
   getSubCategories,
