@@ -394,7 +394,7 @@ export default function UserManagement() {
     const worksheet = XLSX.utils.aoa_to_sheet([
       ["AFMC Users Bulk Upload Template"],
       [
-        "Fill the required columns. Department and Rank are optional; use their exact active names. Phone Number must be exactly 10 digits. Keep User Name as a valid email address.",
+        "Fill the required columns. Department and Rank are optional; active catalog names are matched, and unlisted values are saved only for that user. Phone Number must be exactly 10 digits. Keep User Name as a valid email address.",
       ],
       columns,
       sampleRow,

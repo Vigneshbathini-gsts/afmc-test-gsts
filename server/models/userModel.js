@@ -548,28 +548,17 @@ const createBulkUsers = async ({ rows, createdBy }) => {
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const rowNumber = index + 2;
-      const departmentId = row.departmentName
-        ? departmentIdsByName.get(normalizeOptionName(row.departmentName))
+      const departmentName = String(row.departmentName || "").trim();
+      const rankName = String(row.rankName || "").trim();
+      const departmentId = departmentName
+        ? departmentIdsByName.get(normalizeOptionName(departmentName)) ?? null
         : null;
-      const rankId = row.rankName
-        ? rankIdsByName.get(normalizeOptionName(row.rankName))
+      const rankId = rankName
+        ? rankIdsByName.get(normalizeOptionName(rankName)) ?? null
         : null;
-
-      if (row.departmentName && departmentId == null) {
-        skippedRows.push({
-          rowNumber,
-          reason: `Invalid department: ${row.departmentName}`,
-        });
-        continue;
-      }
-
-      if (row.rankName && rankId == null) {
-        skippedRows.push({
-          rowNumber,
-          reason: `Invalid rank: ${row.rankName}`,
-        });
-        continue;
-      }
+      const otherDepartment =
+        departmentName && departmentId == null ? departmentName : null;
+      const otherRank = rankName && rankId == null ? rankName : null;
 
       const [existingOfficerRows] = await connection.execute(
         `
@@ -698,9 +687,11 @@ const createBulkUsers = async ({ rows, createdBy }) => {
             FIRST_NAME,
             LAST_NAME,
             DEPARTMENT_ID,
-            RANK_ID
+            RANK_ID,
+            OTHER_DEPARTMENT,
+            OTHER_RANK
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           nextUserRow?.nextUserId,
@@ -723,6 +714,8 @@ const createBulkUsers = async ({ rows, createdBy }) => {
           row.lastName,
           departmentId,
           rankId,
+          otherDepartment,
+          otherRank,
         ]
       );
 
