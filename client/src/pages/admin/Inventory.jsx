@@ -150,6 +150,21 @@ export default function Inventory() {
   const [showStockModal, setShowStockModal] = useState(false);
   const [selectedStockItem, setSelectedStockItem] = useState(null);
   const [historyItem, setHistoryItem] = useState(null);
+
+  useEffect(() => {
+    if (!historyItem) return undefined;
+
+    const pageScroller = document.querySelector("main");
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousPageOverflow = pageScroller?.style.overflow;
+    document.body.style.overflow = "hidden";
+    if (pageScroller) pageScroller.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      if (pageScroller) pageScroller.style.overflow = previousPageOverflow;
+    };
+  }, [historyItem]);
   const [historyRows, setHistoryRows] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyHasMore, setHistoryHasMore] = useState(false);
@@ -1244,8 +1259,8 @@ export default function Inventory() {
 
       {historyItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-6" role="presentation" onClick={() => setHistoryItem(null)}>
-          <section role="dialog" aria-modal="true" aria-labelledby="inventory-history-title" className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-start justify-between gap-4 border-b p-5">
+          <section role="dialog" aria-modal="true" aria-labelledby="inventory-history-title" className="flex max-h-[90vh] min-h-0 w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b p-5">
               <div>
                 <h2 id="inventory-history-title" className="text-xl font-semibold text-afmc-maroon">Stock and transaction history</h2>
                 <p className="mt-1 text-sm text-gray-600">{toInitCap(historyItem.item_name)} ({historyItem.item_code}) · Current stock: {historyItem.stock_quantity ?? 0} {historyItem.ac_unit || ""}</p>
@@ -1253,17 +1268,29 @@ export default function Inventory() {
               <button type="button" onClick={() => setHistoryItem(null)} className="rounded-lg px-3 py-1 text-gray-600 hover:bg-gray-100" aria-label="Close history">X</button>
             </div>
             {historyError && <p className="mx-5 mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{historyError}</p>}
-            <div className="flex-1 overflow-auto p-5">
-              <table className="w-full min-w-[760px] text-left text-sm">
-                <thead className="sticky top-0 bg-gray-50 text-gray-600"><tr><th className="px-3 py-3">Transaction date</th><th className="px-3 py-3">Type</th><th className="px-3 py-3">Quantity</th><th className="px-3 py-3">Rate</th><th className="px-3 py-3">Barcode</th><th className="px-3 py-3">Batch</th><th className="px-3 py-3">Entered by</th></tr></thead>
-                <tbody>
-                  {historyRows.map((entry, index) => <tr key={`${entry.transaction_id}-${index}`} className="border-t border-gray-100"><td className="px-3 py-3">{entry.transaction_date || "-"}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${String(entry.transaction_type).toUpperCase() === "IN" ? "bg-green-50 text-green-700" : "bg-orange-50 text-orange-700"}`}>{entry.transaction_type || "-"}</span></td><td className="px-3 py-3">{entry.quantity ?? 0}</td><td className="px-3 py-3">{entry.rate ?? "-"}</td><td className="px-3 py-3 font-mono">{entry.barcode || "-"}</td><td className="px-3 py-3">{entry.batch_name || entry.batch_id || "-"}</td><td className="px-3 py-3">{entry.created_by || "-"}</td></tr>)}
-                  {!historyLoading && historyRows.length === 0 && <tr><td colSpan="7" className="px-4 py-8 text-center text-gray-500">No stock transactions found for this item.</td></tr>}
-                </tbody>
-              </table>
-              {historyLoading && <p className="py-4 text-center text-gray-500">Loading history...</p>}
+            <div className="flex min-h-0 flex-1 flex-col p-5 pb-0 text-left text-sm">
+              <div className="grid shrink-0 grid-cols-[1.25fr_0.6fr_0.8fr_0.6fr_0.9fr_1.6fr_1.7fr] bg-gray-50 font-semibold text-gray-600">
+                  {["Transaction date", "Type", "Quantity", "Rate", "Barcode", "Batch", "Entered by"].map((label) => <div key={label} className="px-3 py-3">{label}</div>)}
+              </div>
+              <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain">
+                <div>
+                  {historyRows.map((entry, index) => (
+                    <div key={`${entry.transaction_id}-${index}`} className="grid grid-cols-[1.25fr_0.6fr_0.8fr_0.6fr_0.9fr_1.6fr_1.7fr] border-t border-gray-100">
+                      <div className="px-3 py-3">{entry.transaction_date || "-"}</div>
+                      <div className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${String(entry.transaction_type).toUpperCase() === "IN" ? "bg-green-50 text-green-700" : "bg-orange-50 text-orange-700"}`}>{entry.transaction_type || "-"}</span></div>
+                      <div className="px-3 py-3">{entry.quantity ?? 0}</div>
+                      <div className="px-3 py-3">{entry.rate ?? "-"}</div>
+                      <div className="px-3 py-3 font-mono">{entry.barcode || "-"}</div>
+                      <div className="px-3 py-3">{entry.batch_name || entry.batch_id || "-"}</div>
+                      <div className="px-3 py-3">{entry.created_by || "-"}</div>
+                    </div>
+                  ))}
+                  {!historyLoading && historyRows.length === 0 && <p className="px-4 py-8 text-center text-gray-500">No stock transactions found for this item.</p>}
+                  {historyLoading && <p className="py-4 text-center text-gray-500">Loading history...</p>}
+                </div>
+              </div>
             </div>
-            <div className="flex items-center justify-between gap-3 border-t p-4">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t p-4">
               <span className="text-sm text-gray-500">{historyRows.length} transaction{historyRows.length === 1 ? "" : "s"} loaded</span>
               <div className="flex gap-2">
                 {historyHasMore && <button type="button" onClick={loadMoreHistory} disabled={historyLoading} className="rounded-xl bg-afmc-maroon px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{historyLoading ? "Loading..." : "Load more"}</button>}

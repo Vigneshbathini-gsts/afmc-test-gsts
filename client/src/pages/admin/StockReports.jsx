@@ -520,15 +520,7 @@ export default function StockReports() {
                   rows.map((row, idx) => (
                     <tr key={`${row.item_code}-${idx}`} className="border-t border-gray-100">
                       {isColumnVisible("itemCode") && (
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            className="text-left text-afmc-maroon hover:underline"
-                            onClick={() => setSelectedBarcodeItem(row)}
-                          >
-                            {row.item_code}
-                          </button>
-                        </td>
+                        <td className="px-4 py-3">{row.item_code}</td>
                       )}
                       {isColumnVisible("itemName") && (
                         <td className="px-4 py-3">

@@ -392,15 +392,7 @@ export default function BarstockReports() {
                         className="border-t border-gray-100 hover:bg-gray-50"
                       >
                         {isColumnVisible("itemCode") && (
-                          <td className="px-4 py-3">
-                            <button
-                              type="button"
-                              className="text-left text-afmc-maroon hover:underline"
-                              onClick={() => setSelectedBarcodeItem(item)}
-                            >
-                              {item.item_code}
-                            </button>
-                          </td>
+                          <td className="px-4 py-3">{item.item_code}</td>
                         )}
                         {isColumnVisible("itemName") && <td className="px-4 py-3 capitalize">
                           <button
