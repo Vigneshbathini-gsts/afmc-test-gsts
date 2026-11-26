@@ -521,7 +521,7 @@ export default function UserEdit() {
                             "others"
                               ? "OTHER"
                               : rank.RANK_ID,
-                          label: rank.RANK_NAME,
+                          label: rank.RANK_ABBREVIATION || rank.RANK_NAME,
                         }))}
                         placeholder={loadingOptions ? "Loading ranks..." : "Select Rank"}
                         selectedLabel={
