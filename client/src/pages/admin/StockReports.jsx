@@ -192,8 +192,8 @@ export default function StockReports() {
       setStockOutSummary(summary);
       setStockOutPage(rowsPerPage === 0 ? 1 : nextPage + 1);
       setStockOutHasMore(rowsPerPage !== 0 && rows.length === rowsPerPage);
-      console.log("data stock reports", rows)
-      console.log("summary",summary)
+      // console.log("data stock reports", rows)
+      // console.log("summary",summary)
       
     } catch (err) {
       console.error("Failed to load stock-out report:", err);

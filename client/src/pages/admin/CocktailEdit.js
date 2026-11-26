@@ -6,6 +6,9 @@ import { cocktailAPI } from "../../services/api";
 import { toInitCap } from "../../utils/textFormat";
 import { FaArrowLeft } from "react-icons/fa";
 import FilterDropdown from "../../components/common/FilterDropdown";
+import Actions, { useActionColumns } from "../../components/common/Actions";
+import { exportTableToCsv } from "../../utils/csvExport";
+import { exportTableToPdf } from "../../utils/pdfExport";
 
 const createEmptyRow = () => ({
   id: Date.now() + Math.floor(Math.random() * 1000),
@@ -18,6 +21,13 @@ const createEmptyRow = () => ({
 
 const normalizeItemCode = (value) => String(value ?? "").trim();
 const INGREDIENT_PAGE_SIZE = 20;
+const INGREDIENT_COLUMNS = [
+  { key: "itemCode", label: "Item Code" },
+  { key: "itemName", label: "Item Name" },
+  { key: "pegs", label: "Pegs" },
+  { key: "memberPrice", label: "Member Price" },
+  { key: "nonMemberPrice", label: "Non Member Price" },
+];
 
 const getDetailValue = (row, ...keys) => {
   for (const key of keys) {
@@ -33,8 +43,11 @@ export default function CocktailEdit() {
   const [searchParams] = useSearchParams();
   const itemId = searchParams.get("itemId");
   const [search, setSearch] = useState("");
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
   const [ingredientOptions, setIngredientOptions] = useState([]);
   const [ingredientPage, setIngredientPage] = useState(0);
@@ -55,6 +68,8 @@ export default function CocktailEdit() {
     imageFileName: "",
   });
   const [rows, setRows] = useState([createEmptyRow()]);
+  const { actionColumns, isColumnVisible, toggleColumn } =
+    useActionColumns(INGREDIENT_COLUMNS);
 
   // Fetches a single page of ingredient options, filtered by `query` on the
   // backend (real search: matches ITEM_NAME or ITEM_CODE server-side).
@@ -333,6 +348,59 @@ export default function CocktailEdit() {
     });
   }, [rows, search]);
 
+  const pageCount =
+    rowsPerPage === 0
+      ? 1
+      : Math.max(1, Math.ceil(filteredRows.length / rowsPerPage));
+  const paginatedRows =
+    rowsPerPage === 0
+      ? filteredRows
+      : filteredRows.slice(
+          (currentPage - 1) * rowsPerPage,
+          currentPage * rowsPerPage
+        );
+  const visibleColumnCount =
+    2 + actionColumns.filter(({ visible }) => visible).length;
+
+  useEffect(() => {
+    setCurrentPage((current) => Math.min(current, pageCount));
+  }, [pageCount]);
+
+  const downloadIngredients = async (format) => {
+    if (!filteredRows.length) {
+      toast.info("No ingredient rows to download.");
+      return;
+    }
+
+    try {
+      setExporting(true);
+      const columns = actionColumns.filter(({ visible }) => visible);
+      const headers = columns.map(({ label }) => label);
+      const exportRows = filteredRows.map((row) =>
+        columns.map(({ key }) =>
+          key === "itemName" ? toInitCap(row[key]) : row[key]
+        )
+      );
+      const fileName = "cocktail-mocktail-ingredients";
+
+      if (format === "csv") {
+        exportTableToCsv({ fileName: `${fileName}.csv`, headers, rows: exportRows });
+      } else {
+        exportTableToPdf({
+          title: "Cocktail/Mocktail Ingredients",
+          fileName: `${fileName}.pdf`,
+          headers,
+          rows: exportRows,
+        });
+      }
+    } catch (exportError) {
+      console.error("Failed to export cocktail/mocktail ingredients:", exportError);
+      toast.error("Failed to export ingredient rows.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const selectedIngredientCodes = useMemo(() => {
     return new Set(
       rows
@@ -577,7 +645,7 @@ return (
 
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+          <div className="rounded-2xl border border-gray-200 bg-white">
             {/* Ingredients header - label stacks above on mobile, Search + Add Row always side by side */}
             <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
               <div className="flex items-center gap-2 text-gray-600">
@@ -585,12 +653,28 @@ return (
                 <span className="text-sm font-medium">Ingredients</span>
               </div>
 
-              <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center sm:gap-3">
+              <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
                 <input
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setCurrentPage(1);
+                  }}
                   placeholder="Search: All Text Columns"
                   className="min-w-0 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 sm:w-auto sm:flex-1 sm:min-w-[240px]"
+                />
+                <Actions
+                  columns={actionColumns}
+                  onToggleColumn={toggleColumn}
+                  rowsPerPage={rowsPerPage}
+                  onRowsPerPageChange={(value) => {
+                    setRowsPerPage(value);
+                    setCurrentPage(1);
+                  }}
+                  onDownloadCsv={() => downloadIngredients("csv")}
+                  onDownloadPdf={() => downloadIngredients("pdf")}
+                  busy={exporting}
+                  loading={loading}
                 />
                 <button
                   type="button"
@@ -606,11 +690,11 @@ return (
               <table className="min-w-[900px] w-full table-fixed text-center text-sm">
                 <colgroup>
                   <col className="w-12" />
-                  <col className="w-[22%]" />
-                  <col className="w-[24%]" />
-                  <col className="w-20" />
-                  <col className="w-[15%]" />
-                  <col className="w-[15%]" />
+                  {isColumnVisible("itemCode") && <col className="w-[22%]" />}
+                  {isColumnVisible("itemName") && <col className="w-[24%]" />}
+                  {isColumnVisible("pegs") && <col className="w-20" />}
+                  {isColumnVisible("memberPrice") && <col className="w-[15%]" />}
+                  {isColumnVisible("nonMemberPrice") && <col className="w-[15%]" />}
                   <col className="w-24" />
                 </colgroup>
                 <thead className="bg-gray-50 text-gray-600">
@@ -618,37 +702,48 @@ return (
                     <th className="border-b border-r border-gray-100 px-4 py-4">
                       #
                     </th>
-                    <th className="border-b border-r border-gray-100 px-4 py-4">
+                    {isColumnVisible("itemCode") && (
+                      <th className="border-b border-r border-gray-100 px-4 py-4">
                       Item Code
-                    </th>
-                    <th className="border-b border-r border-gray-100 px-4 py-4">
+                      </th>
+                    )}
+                    {isColumnVisible("itemName") && (
+                      <th className="border-b border-r border-gray-100 px-4 py-4">
                       Item Name
-                    </th>
-                    <th className="border-b border-r border-gray-100 px-4 py-4">
+                      </th>
+                    )}
+                    {isColumnVisible("pegs") && (
+                      <th className="border-b border-r border-gray-100 px-4 py-4">
                       Pegs
-                    </th>
-                    <th className="border-b border-r border-gray-100 px-4 py-4">
+                      </th>
+                    )}
+                    {isColumnVisible("memberPrice") && (
+                      <th className="border-b border-r border-gray-100 px-4 py-4">
                       Member Price
-                    </th>
-                    <th className="border-b border-r border-gray-100 px-4 py-4">
+                      </th>
+                    )}
+                    {isColumnVisible("nonMemberPrice") && (
+                      <th className="border-b border-r border-gray-100 px-4 py-4">
                       Non Member Price
-                    </th>
+                      </th>
+                    )}
                     <th className="border-b px-4 py-4">Delete Row</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td className="px-4 py-10 text-center text-gray-500" colSpan="7">
+                      <td className="px-4 py-10 text-center text-gray-500" colSpan={visibleColumnCount}>
                         Loading...
                       </td>
                     </tr>
-                  ) : filteredRows.length ? (
-                    filteredRows.map((row, index) => (
+                  ) : paginatedRows.length ? (
+                    paginatedRows.map((row, index) => (
                       <tr key={row.id} className="border-t border-gray-100">
                         <td className="border-r border-gray-100 px-4 py-6">
-                          {index + 1}
+                          {(currentPage - 1) * (rowsPerPage || filteredRows.length) + index + 1}
                         </td>
+                        {isColumnVisible("itemCode") && (
                         <td className="border-r border-gray-100 px-2 py-3">
                           <FilterDropdown
                             value={row.itemCode}
@@ -671,6 +766,8 @@ return (
                             loadingLabel="Searching..."
                           />
                         </td>
+                        )}
+                        {isColumnVisible("itemName") && (
                         <td className="border-r border-gray-100 px-2 py-3">
                           <input
                             value={toInitCap(row.itemName)}
@@ -678,6 +775,8 @@ return (
                             className="w-full bg-transparent text-center outline-none capitalize"
                           />
                         </td>
+                        )}
+                        {isColumnVisible("pegs") && (
                         <td className="border-r border-gray-100 px-2 py-3">
                           <input
                             value={row.pegs}
@@ -687,6 +786,8 @@ return (
                             className="w-full bg-transparent text-center outline-none"
                           />
                         </td>
+                        )}
+                        {isColumnVisible("memberPrice") && (
                         <td className="border-r border-gray-100 px-2 py-3">
                           <input
                             value={row.memberPrice}
@@ -694,6 +795,8 @@ return (
                             className="w-full bg-transparent text-center outline-none"
                           />
                         </td>
+                        )}
+                        {isColumnVisible("nonMemberPrice") && (
                         <td className="border-r border-gray-100 px-2 py-3">
                           <input
                             value={row.nonMemberPrice}
@@ -701,6 +804,7 @@ return (
                             className="w-full bg-transparent text-center outline-none"
                           />
                         </td>
+                        )}
                         <td className="px-2 py-3">
                           <button
                             type="button"
@@ -714,7 +818,7 @@ return (
                     ))
                   ) : (
                     <tr>
-                      <td className="px-4 py-10 text-center text-gray-500" colSpan="7">
+                      <td className="px-4 py-10 text-center text-gray-500" colSpan={visibleColumnCount}>
                         No data found
                       </td>
                     </tr>
@@ -724,8 +828,42 @@ return (
             </div>
 
             <div className="flex flex-col gap-1 px-4 py-3 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
-              <span>Showing {filteredRows.length} rows</span>
+              <span>
+                Showing{" "}
+                {filteredRows.length
+                  ? rowsPerPage === 0
+                    ? `1-${filteredRows.length}`
+                    : `${(currentPage - 1) * rowsPerPage + 1}-${Math.min(
+                        currentPage * rowsPerPage,
+                        filteredRows.length
+                      )}`
+                  : "0"}{" "}
+                of {filteredRows.length} rows
+              </span>
               <span>Total {rows.length}</span>
+              {pageCount > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((current) => current - 1)}
+                    disabled={currentPage === 1}
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Page {currentPage} of {pageCount}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((current) => current + 1)}
+                    disabled={currentPage === pageCount}
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </div>
           </div>
           </div>
