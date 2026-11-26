@@ -4,9 +4,11 @@ const Module = require("node:module");
 
 const userModelPath = require.resolve("../models/userModel");
 let updatedUserPayload;
+let createdUserPayload;
 const userModelMock = {
-  createUser: async () => {
-    throw new Error("createUser should not be called for invalid payloads");
+  createUser: async (payload) => {
+    createdUserPayload = payload;
+    return { USER_ID: 1 };
   },
   updateUser: async (userId, payload) => {
     updatedUserPayload = payload;
@@ -72,6 +74,46 @@ test("user creation requires department and rank", async () => {
   assert.equal(rankResponse.payload.message, "Rank is required");
 });
 
+test("user creation accepts custom department and rank values", async () => {
+  createdUserPayload = null;
+  const response = createResponse();
+  await userController.createUser(
+    {
+      body: {
+        ...validCreatePayload,
+        departmentId: "OTHER",
+        rankId: "OTHER",
+        otherDepartment: "Medical Research",
+        otherRank: "Consultant",
+      },
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(createdUserPayload.departmentId, null);
+  assert.equal(createdUserPayload.rankId, null);
+  assert.equal(createdUserPayload.otherDepartment, "Medical Research");
+  assert.equal(createdUserPayload.otherRank, "Consultant");
+});
+
+test("custom department and rank are required when Others is selected", async () => {
+  const response = createResponse();
+  await userController.createUser(
+    {
+      body: {
+        ...validCreatePayload,
+        departmentId: "OTHER",
+        rankId: "OTHER",
+      },
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.payload.message, "Enter the department");
+});
+
 test("user updates allow department and rank to be omitted", async () => {
   updatedUserPayload = null;
   const response = createResponse();
@@ -82,4 +124,47 @@ test("user updates allow department and rank to be omitted", async () => {
   assert.equal(response.statusCode, 200);
   assert.equal(updatedUserPayload.departmentId, null);
   assert.equal(updatedUserPayload.rankId, null);
+});
+
+test("user updates accept and persist custom department and rank values", async () => {
+  updatedUserPayload = null;
+  const response = createResponse();
+  await userController.updateUser(
+    {
+      params: { id: "1" },
+      body: {
+        ...validUpdatePayload,
+        departmentId: "OTHER",
+        rankId: "OTHER",
+        otherDepartment: "Medical Research",
+        otherRank: "Consultant",
+      },
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(updatedUserPayload.departmentId, null);
+  assert.equal(updatedUserPayload.rankId, null);
+  assert.equal(updatedUserPayload.otherDepartment, "Medical Research");
+  assert.equal(updatedUserPayload.otherRank, "Consultant");
+});
+
+test("user updates require a custom value for each selected Others option", async () => {
+  const response = createResponse();
+  await userController.updateUser(
+    {
+      params: { id: "1" },
+      body: {
+        ...validUpdatePayload,
+        departmentId: "OTHER",
+        rankId: "OTHER",
+        otherDepartment: "Medical Research",
+      },
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.payload.message, "Enter the rank");
 });

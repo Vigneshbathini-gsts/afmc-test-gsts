@@ -4,6 +4,13 @@ const { validatePassword } = require("../helpers/authHelper");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^\d{10}$/;
+const isOtherOption = (value) =>
+  String(value ?? "").trim().toUpperCase() === "OTHER";
+
+const normalizeOptionId = (value) => {
+  if (value == null || value === "" || isOtherOption(value)) return null;
+  return Number(value);
+};
 
 const normalizeUserPayload = (payload = {}) => ({
   loginType: String(payload.loginType || "").trim(),
@@ -17,18 +24,41 @@ const normalizeUserPayload = (payload = {}) => ({
   createdBy: String(payload.createdBy || "").trim(),
   roleId: payload.roleId,
   status: String(payload.status || "").trim(),
-  departmentId:
-    payload.departmentId == null || payload.departmentId === ""
-      ? null
-      : Number(payload.departmentId),
-  rankId:
-    payload.rankId == null || payload.rankId === ""
-      ? null
-      : Number(payload.rankId),
+  departmentIsOther: isOtherOption(payload.departmentId),
+  rankIsOther: isOtherOption(payload.rankId),
+  departmentId: normalizeOptionId(payload.departmentId),
+  rankId: normalizeOptionId(payload.rankId),
+  otherDepartment: String(payload.otherDepartment || "").trim(),
+  otherRank: String(payload.otherRank || "").trim(),
 });
 
 const isValidOptionId = (value) =>
   Number.isInteger(value) && value > 0;
+
+const validateOptionSelection = (
+  label,
+  optionId,
+  isOther,
+  customValue,
+  required
+) => {
+  const normalizedLabel = label.toLowerCase();
+  if (customValue.length > 255) {
+    return `Other ${normalizedLabel} must be 255 characters or fewer`;
+  }
+  if (isOther) {
+    return customValue ? null : `Enter the ${normalizedLabel}`;
+  }
+  if (customValue) {
+    return `Select Others to enter a custom ${normalizedLabel}`;
+  }
+  if (optionId == null) {
+    return required ? `${label} is required` : null;
+  }
+  return isValidOptionId(optionId)
+    ? null
+    : `Invalid ${normalizedLabel} selected`;
+};
 
 const validateCreatePayload = (payload) => {
   if (
@@ -71,19 +101,23 @@ const validateCreatePayload = (payload) => {
     return "Phone number must be exactly 10 digits";
   }
 
-  if (payload.departmentId == null) {
-    return "Department is required";
-  }
-  if (!isValidOptionId(payload.departmentId)) {
-    return "Invalid department selected";
-  }
+  const departmentError = validateOptionSelection(
+    "Department",
+    payload.departmentId,
+    payload.departmentIsOther,
+    payload.otherDepartment,
+    true
+  );
+  if (departmentError) return departmentError;
 
-  if (payload.rankId == null) {
-    return "Rank is required";
-  }
-  if (!isValidOptionId(payload.rankId)) {
-    return "Invalid rank selected";
-  }
+  const rankError = validateOptionSelection(
+    "Rank",
+    payload.rankId,
+    payload.rankIsOther,
+    payload.otherRank,
+    true
+  );
+  if (rankError) return rankError;
 
   return null;
 };
@@ -124,13 +158,23 @@ const validateUpdatePayload = (payload) => {
     return "Phone number must be exactly 10 digits";
   }
 
-  if (payload.departmentId != null && !isValidOptionId(payload.departmentId)) {
-    return "Invalid department selected";
-  }
+  const departmentError = validateOptionSelection(
+    "Department",
+    payload.departmentId,
+    payload.departmentIsOther,
+    payload.otherDepartment,
+    false
+  );
+  if (departmentError) return departmentError;
 
-  if (payload.rankId != null && !isValidOptionId(payload.rankId)) {
-    return "Invalid rank selected";
-  }
+  const rankError = validateOptionSelection(
+    "Rank",
+    payload.rankId,
+    payload.rankIsOther,
+    payload.otherRank,
+    false
+  );
+  if (rankError) return rankError;
 
   return null;
 };
@@ -448,6 +492,8 @@ exports.createUser = async (req, res) => {
       phoneNumber: payload.phoneNumber,
       departmentId: payload.departmentId,
       rankId: payload.rankId,
+      otherDepartment: payload.otherDepartment,
+      otherRank: payload.otherRank,
       createdBy: req.user?.username || req.user?.user_name || "SYSTEM",
     });
 
@@ -509,6 +555,8 @@ exports.updateUser = async (req, res) => {
       phoneNumber: payload.phoneNumber,
       departmentId: payload.departmentId,
       rankId: payload.rankId,
+      otherDepartment: payload.otherDepartment,
+      otherRank: payload.otherRank,
     });
 
     return res.status(200).json({

@@ -15,6 +15,7 @@ import { useAuth } from "../../context/AuthContext";
 import { userAPI } from "../../services/api";
 import { getPasswordPolicyError } from "../../utils/passwordPolicy";
 import Actions, { useActionColumns } from "../../components/common/Actions";
+import FilterDropdown from "../../components/common/FilterDropdown";
 import { exportTableToPdf } from "../../utils/pdfExport";
 import { exportTableToCsv } from "../../utils/csvExport";
 
@@ -40,6 +41,8 @@ const INITIAL_FORM = {
   phoneNumber: "",
   department: "", // holds DEPARTMENT_ID
   rank: "",       // holds RANK_ID
+  otherDepartment: "",
+  otherRank: "",
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -73,7 +76,13 @@ const validateCreateForm = (formData) => {
   if (!PHONE_REGEX.test(formData.phoneNumber.trim()))
     return "Phone number must be exactly 10 digits.";
   if (!formData.department) return "Department is required.";
+  if (formData.department === "OTHER" && !formData.otherDepartment.trim()) {
+    return "Enter the department name.";
+  }
   if (!formData.rank) return "Rank is required.";
+  if (formData.rank === "OTHER" && !formData.otherRank.trim()) {
+    return "Enter the rank.";
+  }
   return "";
 };
 
@@ -288,12 +297,19 @@ export default function UserManagement() {
     const { name, value } = event.target;
     const normalizedValue =
       name === "phoneNumber" ? value.replace(/\D/g, "").slice(0, 10) : value;
+    const customField =
+      name === "department"
+        ? "otherDepartment"
+        : name === "rank"
+          ? "otherRank"
+          : null;
 
     setFormError("");
     setFormSuccess("");
     setFormData((prev) => ({
       ...prev,
       [name]: normalizedValue,
+      ...(customField ? { [customField]: "" } : {}),
     }));
   };
 
@@ -318,8 +334,11 @@ export default function UserManagement() {
       confirmPassword: formData.confirmPassword,
       email: formData.email.trim(),
       phoneNumber: formData.phoneNumber.trim(),
-      departmentId: formData.department ? Number(formData.department) : null,
-      rankId: formData.rank ? Number(formData.rank) : null,
+      departmentId: formData.department || null,
+      rankId: formData.rank || null,
+      otherDepartment:
+        formData.department === "OTHER" ? formData.otherDepartment.trim() : "",
+      otherRank: formData.rank === "OTHER" ? formData.otherRank.trim() : "",
       createdBy: currentUser,
     };
 
@@ -789,15 +808,25 @@ export default function UserManagement() {
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Login Type
                   </label>
-                  <select
-                    name="loginType"
+                  <FilterDropdown
+                    id="loginType"
                     value={formData.loginType}
-                    onChange={handleFormChange}
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                  >
-                    <option value="Member">Member</option>
-                    <option value="Non Member">Non Member</option>
-                  </select>
+                    onChange={(value) =>
+                      handleFormChange({
+                        target: { name: "loginType", value },
+                      })
+                    }
+                    options={[
+                      { value: "Member", label: "Member" },
+                      { value: "Non Member", label: "Non Member" },
+                    ]}
+                    placeholder="Select Login Type"
+                    allLabel={null}
+                    showSearch={false}
+                    usePortal
+                    menuListClassName="max-h-48"
+                    buttonClassName="rounded-2xl px-4 py-2 text-sm"
+                  />
                 </div>
 
                 {/* First Name */}
@@ -851,55 +880,96 @@ export default function UserManagement() {
 
                 {/* ========== DEPARTMENT ========== */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                  <label
+                    htmlFor="department"
+                    className="mb-1 block text-sm font-medium text-gray-700"
+                  >
                     Department <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    name="department"
+                  <FilterDropdown
+                    id="department"
                     value={formData.department}
-                    onChange={handleFormChange}
+                    onChange={(value) =>
+                      handleFormChange({
+                        target: { name: "department", value },
+                      })
+                    }
+                    options={departmentOptions.map((dept) => ({
+                      value:
+                        String(dept.DEPARTMENT_NAME || "").trim().toLowerCase() ===
+                        "others"
+                          ? "OTHER"
+                          : dept.DEPARTMENT_ID,
+                      label: dept.DEPARTMENT_NAME,
+                    }))}
+                    placeholder={
+                      optionsLoading ? "Loading departments..." : "Select Department"
+                    }
+                    allLabel="Select Department"
                     disabled={optionsLoading}
-                    required
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 disabled:opacity-60"
-                  >
-                    <option value="">
-                      {optionsLoading
-                        ? "Loading departments..."
-                        : "Select Department"}
-                    </option>
-                    {departmentOptions.map((dept) => (
-                      <option
-                        key={dept.DEPARTMENT_ID}
-                        value={dept.DEPARTMENT_ID}
-                      >
-                        {dept.DEPARTMENT_NAME}
-                      </option>
-                    ))}
-                  </select>
+                    loading={optionsLoading}
+                    loadingLabel="Loading departments..."
+                    usePortal
+                    menuListClassName="max-h-48"
+                    buttonClassName="rounded-2xl px-4 py-2 text-sm"
+                  />
+                  {formData.department === "OTHER" && (
+                    <input
+                      type="text"
+                      name="otherDepartment"
+                      value={formData.otherDepartment}
+                      onChange={handleFormChange}
+                      maxLength={255}
+                      required
+                      placeholder="Enter department"
+                      className="mt-2 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                    />
+                  )}
                 </div>
 
                 {/* ========== RANK ========== */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                  <label
+                    htmlFor="rank"
+                    className="mb-1 block text-sm font-medium text-gray-700"
+                  >
                     Rank <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    name="rank"
+                  <FilterDropdown
+                    id="rank"
                     value={formData.rank}
-                    onChange={handleFormChange}
+                    onChange={(value) =>
+                      handleFormChange({ target: { name: "rank", value } })
+                    }
+                    options={rankOptions.map((rank) => ({
+                      value:
+                        String(rank.RANK_NAME || "").trim().toLowerCase() ===
+                        "others"
+                          ? "OTHER"
+                          : rank.RANK_ID,
+                      label: rank.RANK_NAME,
+                    }))}
+                    placeholder={optionsLoading ? "Loading ranks..." : "Select Rank"}
+                    allLabel="Select Rank"
                     disabled={optionsLoading}
-                    required
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 disabled:opacity-60"
-                  >
-                    <option value="">
-                      {optionsLoading ? "Loading ranks..." : "Select Rank"}
-                    </option>
-                    {rankOptions.map((r) => (
-                      <option key={r.RANK_ID} value={r.RANK_ID}>
-                        {r.RANK_NAME}
-                      </option>
-                    ))}
-                  </select>
+                    loading={optionsLoading}
+                    loadingLabel="Loading ranks..."
+                    usePortal
+                    menuListClassName="max-h-48"
+                    buttonClassName="rounded-2xl px-4 py-2 text-sm"
+                  />
+                  {formData.rank === "OTHER" && (
+                    <input
+                      type="text"
+                      name="otherRank"
+                      value={formData.otherRank}
+                      onChange={handleFormChange}
+                      maxLength={255}
+                      required
+                      placeholder="Enter rank"
+                      className="mt-2 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                    />
+                  )}
                 </div>
 
                 {/* Email */}

@@ -14,6 +14,8 @@ const BASE_USER_SELECT = `
     xu.PHONE_NUMBER,
     xu.DEPARTMENT_ID,
     xu.RANK_ID,
+    xu.OTHER_DEPARTMENT,
+    xu.OTHER_RANK,
     xu.ATTRIBUTE1,
     CASE
       WHEN xu.attribute1 = 'A' THEN 'Active'
@@ -230,14 +232,20 @@ const resolveRoleDetails = async ({ loginType, roleId }) => {
 
 const validateUserOptionIds = async (
   connection,
-  { departmentId, rankId },
+  { departmentId, rankId, otherDepartment, otherRank },
   { required = true } = {}
 ) => {
   if (departmentId == null) {
-    if (required) {
+    if (required && !otherDepartment) {
       throw new Error("Department is required");
     }
+    if (otherDepartment && otherDepartment.length > 255) {
+      throw new Error("Other department must be 255 characters or fewer");
+    }
   } else {
+    if (otherDepartment) {
+      throw new Error("Select Others to enter a custom department");
+    }
     const [departments] = await connection.execute(
       "SELECT DEPARTMENT_ID FROM xxafmc_departments WHERE DEPARTMENT_ID = ? LIMIT 1",
       [departmentId]
@@ -248,10 +256,16 @@ const validateUserOptionIds = async (
   }
 
   if (rankId == null) {
-    if (required) {
+    if (required && !otherRank) {
       throw new Error("Rank is required");
     }
+    if (otherRank && otherRank.length > 255) {
+      throw new Error("Other rank must be 255 characters or fewer");
+    }
   } else {
+    if (otherRank) {
+      throw new Error("Select Others to enter a custom rank");
+    }
     const [ranks] = await connection.execute(
       "SELECT RANK_ID FROM xxafmc_ranks WHERE RANK_ID = ? LIMIT 1",
       [rankId]
@@ -272,6 +286,8 @@ const createUser = async ({
   phoneNumber,
   departmentId,
   rankId,
+  otherDepartment,
+  otherRank,
   createdBy,
 }) => {
   const normalizedLoginType =
@@ -291,7 +307,12 @@ const createUser = async ({
 
   try {
     await connection.beginTransaction();
-    await validateUserOptionIds(connection, { departmentId, rankId });
+    await validateUserOptionIds(connection, {
+      departmentId,
+      rankId,
+      otherDepartment,
+      otherRank,
+    });
 
     const [existingUsers] = await connection.execute(
       `
@@ -333,9 +354,11 @@ const createUser = async ({
           REQUIRED_PASSWORD_CHANGE,
           CONFIRM_PASSWORD,
           DEPARTMENT_ID,
-          RANK_ID
+          RANK_ID,
+          OTHER_DEPARTMENT,
+          OTHER_RANK
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         nextUserId,
@@ -355,6 +378,8 @@ const createUser = async ({
         hashedPassword,
         departmentId,
         rankId,
+        otherDepartment || null,
+        otherRank || null,
       ]
     );
 
@@ -380,6 +405,8 @@ const updateUser = async (
     phoneNumber,
     departmentId,
     rankId,
+    otherDepartment,
+    otherRank,
   }
 ) => {
   const normalizedLoginType =
@@ -404,7 +431,7 @@ const updateUser = async (
     await connection.beginTransaction();
     await validateUserOptionIds(
       connection,
-      { departmentId, rankId },
+      { departmentId, rankId, otherDepartment, otherRank },
       { required: false }
     );
 
@@ -435,7 +462,9 @@ const updateUser = async (
           PHONE_NUMBER = ?,
           ROLE = ?,
           DEPARTMENT_ID = ?,
-          RANK_ID = ?
+          RANK_ID = ?,
+          OTHER_DEPARTMENT = ?,
+          OTHER_RANK = ?
         WHERE USER_ID = ?
       `,
       [
@@ -448,6 +477,8 @@ const updateUser = async (
         roleDetails.ROLE,
         departmentId,
         rankId,
+        otherDepartment || null,
+        otherRank || null,
         userId,
       ]
     );

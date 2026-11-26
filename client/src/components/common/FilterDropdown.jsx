@@ -3,18 +3,23 @@ import { createPortal } from "react-dom";
 import { FaChevronDown, FaSearch } from "react-icons/fa";
 
 export default function FilterDropdown({
+  id,
   label,
   value,
   onChange,
   options,
   placeholder = "Select",
   allLabel = "All",
+  selectedLabel,
+  menuFooter,
+  showSearch = true,
   disabled = false,
   loading = false,
   loadingLabel = "Loading...",
   formatLabel = (v) => v,
   buttonClassName = "",
   menuClassName = "",
+  menuListClassName = "",
   labelClassName = "",
   valueClassName = "",
   usePortal = false,
@@ -103,7 +108,7 @@ export default function FilterDropdown({
   }, [cleanedOptions, query]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !showSearch) return;
     // Focus the search box without letting the browser auto-scroll the
     // page to bring it into view (that scroll is what was causing the
     // whole UI to jump when the dropdown opened / while typing).
@@ -111,7 +116,7 @@ export default function FilterDropdown({
       searchInputRef.current?.focus({ preventScroll: true });
     }, 0);
     return () => clearTimeout(t);
-  }, [isOpen]);
+  }, [isOpen, showSearch]);
 
   useLayoutEffect(() => {
     if (!isOpen || !usePortal) {
@@ -171,9 +176,11 @@ export default function FilterDropdown({
   const selectedOption = cleanedOptions.find(
     (opt) => String(opt.value) === String(selectedValue)
   );
-  const buttonLabel = selectedOption
-    ? formatLabel(selectedOption.label)
-    : (selectedValue ? formatLabel(selectedValue) : placeholder);
+  const buttonLabel =
+    selectedLabel ??
+    (selectedOption
+      ? formatLabel(selectedOption.label)
+      : (selectedValue ? formatLabel(selectedValue) : placeholder));
 
   const menuEl = (
     <div
@@ -204,26 +211,34 @@ export default function FilterDropdown({
           : undefined
       }
     >
-      <div className="border-b border-gray-100 p-3">
-        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-          <FaSearch className="text-gray-400" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={query}
-            onChange={(e) => {
-              const nextQuery = e.target.value;
-              setQuery(nextQuery);
-              onSearchChange?.(nextQuery);
-            }}
-            placeholder="Search"
-            className="w-full bg-transparent text-sm text-gray-800 outline-none placeholder:text-gray-400"
-          />
+      {showSearch && (
+        <div className="border-b border-gray-100 p-3">
+          <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+            <FaSearch className="text-gray-400" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={query}
+              onChange={(e) => {
+                const nextQuery = e.target.value;
+                setQuery(nextQuery);
+                onSearchChange?.(nextQuery);
+              }}
+              placeholder="Search"
+              className="w-full bg-transparent text-sm text-gray-800 outline-none placeholder:text-gray-400"
+            />
+          </div>
         </div>
-      </div>
+      )}
+
+      {menuFooter ? (
+        <div className="border-b border-gray-100 p-3">{menuFooter}</div>
+      ) : null}
 
       <div
-        className="h-60 overflow-y-auto py-2"
+        className={`${
+          menuListClassName || "h-60"
+        } overflow-y-auto py-2`}
         onScroll={(event) => {
           const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
           if (
@@ -236,25 +251,24 @@ export default function FilterDropdown({
           }
         }}
       >
-        <button
-          type="button"
-          onClick={() => {
-            // Clear internal query so the search box is emptied
-            setQuery("");
-            // Notify parent so it can reload the unfiltered option list
-            onSearchChange?.("");
-            // Clear selection
-            onChange?.("");
-            setIsOpen(false);
-          }}
-          className={`w-full px-4 py-2.5 text-left text-sm hover:bg-afmc-maroon2/5 ${
-            !selectedValue
-              ? "bg-afmc-maroon2/10 font-medium text-afmc-maroon"
-              : "text-gray-700"
-          }`}
-        >
-          {allLabel}
-        </button>
+        {allLabel != null && (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery("");
+              onSearchChange?.("");
+              onChange?.("");
+              setIsOpen(false);
+            }}
+            className={`w-full px-4 py-2.5 text-left text-sm hover:bg-afmc-maroon2/5 ${
+              !selectedValue
+                ? "bg-afmc-maroon2/10 font-medium text-afmc-maroon"
+                : "text-gray-700"
+            }`}
+          >
+            {allLabel}
+          </button>
+        )}
 
         {loading ? (
           <div className="flex h-40 items-center justify-center text-sm text-gray-500">
@@ -304,13 +318,14 @@ export default function FilterDropdown({
 
       <div className="relative" ref={dropdownRef}>
         <button
+          id={id}
           ref={buttonRef}
           type="button"
           disabled={disabled}
           onClick={() => setIsOpen((prev) => !prev)}
           className={`w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-left text-gray-800 focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 flex items-center justify-between disabled:opacity-60 disabled:cursor-not-allowed ${buttonClassName}`}
         >
-         <span className="capitalize truncate">
+          <span className={`truncate ${selectedLabel == null ? "capitalize" : ""}`}>
             {buttonLabel}
           </span>
           <FaChevronDown

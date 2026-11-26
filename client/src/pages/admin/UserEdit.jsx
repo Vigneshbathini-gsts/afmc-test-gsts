@@ -3,6 +3,7 @@ import { toast } from "react-toastify";
 import { ArrowLeft, Save } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { userAPI } from "../../services/api";
+import FilterDropdown from "../../components/common/FilterDropdown";
 
 const INITIAL_FORM = {
   userName: "",
@@ -14,6 +15,8 @@ const INITIAL_FORM = {
   phoneNumber: "",
   departmentId: "",
   rankId: "",
+  otherDepartment: "",
+  otherRank: "",
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -24,7 +27,23 @@ const STATUS_STYLES = {
   Inactive: "bg-[#fff1f1] text-[#b04444] border-[#f1c8c8]",
 };
 
-const validateEditForm = (formData, roles) => {
+const getOptionSelection = (value, options, idKey, nameKey) => {
+  if (value === "OTHER") return value;
+  const selectedOption = options.find(
+    (option) => String(option[idKey]) === String(value)
+  );
+  return String(selectedOption?.[nameKey] || "").trim().toLowerCase() ===
+    "others"
+    ? "OTHER"
+    : value;
+};
+
+const validateEditForm = (
+  formData,
+  roles,
+  departmentSelection,
+  rankSelection
+) => {
   const firstName = String(formData.firstName || "").trim();
   const email = String(formData.email || "").trim();
   const phoneNumber = String(formData.phoneNumber || "").trim();
@@ -47,6 +66,18 @@ const validateEditForm = (formData, roles) => {
   if (!phoneNumber) return "Phone number is required.";
   if (!PHONE_REGEX.test(phoneNumber))
     return "Phone number must be exactly 10 digits.";
+  if (
+    departmentSelection === "OTHER" &&
+    !String(formData.otherDepartment || "").trim()
+  ) {
+    return "Enter the department name.";
+  }
+  if (
+    rankSelection === "OTHER" &&
+    !String(formData.otherRank || "").trim()
+  ) {
+    return "Enter the rank.";
+  }
   return "";
 };
 
@@ -65,6 +96,19 @@ export default function UserEdit() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const departmentSelection = getOptionSelection(
+    formData.departmentId,
+    departmentOptions,
+    "DEPARTMENT_ID",
+    "DEPARTMENT_NAME"
+  );
+  const rankSelection = getOptionSelection(
+    formData.rankId,
+    rankOptions,
+    "RANK_ID",
+    "RANK_NAME"
+  );
+
   useEffect(() => {
     const loadUser = async () => {
       try {
@@ -82,8 +126,18 @@ export default function UserEdit() {
           status: user?.status || "Active",
           email: user?.EMAIL || "",
           phoneNumber: user?.PHONE_NUMBER ? String(user.PHONE_NUMBER) : "",
-          departmentId: user?.DEPARTMENT_ID ? String(user.DEPARTMENT_ID) : "",
-          rankId: user?.RANK_ID ? String(user.RANK_ID) : "",
+          departmentId: user?.OTHER_DEPARTMENT
+            ? "OTHER"
+            : user?.DEPARTMENT_ID
+              ? String(user.DEPARTMENT_ID)
+              : "",
+          rankId: user?.OTHER_RANK
+            ? "OTHER"
+            : user?.RANK_ID
+              ? String(user.RANK_ID)
+              : "",
+          otherDepartment: user?.OTHER_DEPARTMENT || "",
+          otherRank: user?.OTHER_RANK || "",
         });
       } catch (fetchError) {
         console.error("Failed to fetch user:", fetchError);
@@ -159,11 +213,20 @@ export default function UserEdit() {
     const { name, value } = event.target;
     const normalizedValue =
       name === "phoneNumber" ? value.replace(/\D/g, "").slice(0, 10) : value;
+    const customField =
+      name === "departmentId"
+        ? "otherDepartment"
+        : name === "rankId"
+          ? "otherRank"
+          : null;
     setSuccess("");
     setError("");
     setFormData((prev) => ({
       ...prev,
       [name]: normalizedValue,
+      ...(customField && normalizedValue !== "OTHER"
+        ? { [customField]: "" }
+        : {}),
     }));
   };
 
@@ -172,7 +235,12 @@ export default function UserEdit() {
     setError("");
     setSuccess("");
 
-    const validationMessage = validateEditForm(formData, roles);
+    const validationMessage = validateEditForm(
+      formData,
+      roles,
+      departmentSelection,
+      rankSelection
+    );
     if (validationMessage) {
       setError(validationMessage);
       toast.error(validationMessage);
@@ -188,10 +256,13 @@ export default function UserEdit() {
         status: formData.status,
         email: formData.email.trim(),
         phoneNumber: formData.phoneNumber.trim(),
-        departmentId: formData.departmentId
-          ? Number(formData.departmentId)
-          : null,
-        rankId: formData.rankId ? Number(formData.rankId) : null,
+        departmentId: departmentSelection || null,
+        rankId: rankSelection || null,
+        otherDepartment:
+          departmentSelection === "OTHER"
+            ? formData.otherDepartment.trim()
+            : "",
+        otherRank: rankSelection === "OTHER" ? formData.otherRank.trim() : "",
       });
 
       const updatedUser = response.data?.data;
@@ -301,16 +372,25 @@ export default function UserEdit() {
                       >
                         Login Type
                       </label>
-                      <select
+                      <FilterDropdown
                         id="loginType"
-                        name="loginType"
                         value={formData.loginType}
-                        onChange={handleChange}
-                        className="w-full rounded-xl sm:rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                      >
-                        <option value="Member">Member</option>
-                        <option value="Non Member">Non Member</option>
-                      </select>
+                        onChange={(value) =>
+                          handleChange({
+                            target: { name: "loginType", value },
+                          })
+                        }
+                        options={[
+                          { value: "Member", label: "Member" },
+                          { value: "Non Member", label: "Non Member" },
+                        ]}
+                        placeholder="Select Login Type"
+                        allLabel={null}
+                        showSearch={false}
+                        usePortal
+                        menuListClassName="max-h-48"
+                        buttonClassName="rounded-xl px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base"
+                      />
                     </div>
 
                     <div>
@@ -320,16 +400,23 @@ export default function UserEdit() {
                       >
                         Status
                       </label>
-                      <select
+                      <FilterDropdown
                         id="status"
-                        name="status"
                         value={formData.status}
-                        onChange={handleChange}
-                        className="w-full rounded-xl sm:rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                      >
-                        <option value="Active">Active</option>
-                        <option value="Inactive">Inactive</option>
-                      </select>
+                        onChange={(value) =>
+                          handleChange({ target: { name: "status", value } })
+                        }
+                        options={[
+                          { value: "Active", label: "Active" },
+                          { value: "Inactive", label: "Inactive" },
+                        ]}
+                        placeholder="Select Status"
+                        allLabel={null}
+                        showSearch={false}
+                        usePortal
+                        menuListClassName="max-h-48"
+                        buttonClassName="rounded-xl px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base"
+                      />
                     </div>
 
                     <div className="sm:col-span-2">
@@ -362,26 +449,57 @@ export default function UserEdit() {
                       >
                         Department
                       </label>
-                      <select
+                      <FilterDropdown
                         id="departmentId"
-                        name="departmentId"
-                        value={formData.departmentId}
-                        onChange={handleChange}
+                        value={departmentSelection}
+                        onChange={(value) =>
+                          handleChange({
+                            target: { name: "departmentId", value },
+                          })
+                        }
+                        options={departmentOptions.map((department) => ({
+                          value:
+                            String(department.DEPARTMENT_NAME || "")
+                              .trim()
+                              .toLowerCase() === "others"
+                              ? "OTHER"
+                              : department.DEPARTMENT_ID,
+                          label: department.DEPARTMENT_NAME,
+                        }))}
+                        placeholder={
+                          loadingOptions ? "Loading departments..." : "Select Department"
+                        }
+                        selectedLabel={
+                          departmentSelection === "OTHER"
+                            ? formData.otherDepartment || "Others"
+                            : undefined
+                        }
+                        menuFooter={
+                          departmentSelection === "OTHER" ? (
+                            <label className="block text-xs font-medium text-gray-600">
+                              Custom department
+                              <input
+                                type="text"
+                                id="otherDepartment"
+                                name="otherDepartment"
+                                value={formData.otherDepartment}
+                                onChange={handleChange}
+                                maxLength={255}
+                                required
+                                placeholder="Enter department"
+                                className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                              />
+                            </label>
+                          ) : null
+                        }
+                        allLabel="Select Department"
                         disabled={loadingOptions}
-                        className="w-full rounded-xl sm:rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <option value="">
-                          {loadingOptions ? "Loading departments..." : "Select Department"}
-                        </option>
-                        {departmentOptions.map((department) => (
-                          <option
-                            key={department.DEPARTMENT_ID}
-                            value={department.DEPARTMENT_ID}
-                          >
-                            {department.DEPARTMENT_NAME}
-                          </option>
-                        ))}
-                      </select>
+                        loading={loadingOptions}
+                        loadingLabel="Loading departments..."
+                        usePortal
+                        menuListClassName="max-h-48"
+                        buttonClassName="rounded-xl px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base"
+                      />
                     </div>
 
                     <div>
@@ -391,23 +509,52 @@ export default function UserEdit() {
                       >
                         Rank
                       </label>
-                      <select
+                      <FilterDropdown
                         id="rankId"
-                        name="rankId"
-                        value={formData.rankId}
-                        onChange={handleChange}
+                        value={rankSelection}
+                        onChange={(value) =>
+                          handleChange({ target: { name: "rankId", value } })
+                        }
+                        options={rankOptions.map((rank) => ({
+                          value:
+                            String(rank.RANK_NAME || "").trim().toLowerCase() ===
+                            "others"
+                              ? "OTHER"
+                              : rank.RANK_ID,
+                          label: rank.RANK_NAME,
+                        }))}
+                        placeholder={loadingOptions ? "Loading ranks..." : "Select Rank"}
+                        selectedLabel={
+                          rankSelection === "OTHER"
+                            ? formData.otherRank || "Others"
+                            : undefined
+                        }
+                        menuFooter={
+                          rankSelection === "OTHER" ? (
+                            <label className="block text-xs font-medium text-gray-600">
+                              Custom rank
+                              <input
+                                type="text"
+                                id="otherRank"
+                                name="otherRank"
+                                value={formData.otherRank}
+                                onChange={handleChange}
+                                maxLength={255}
+                                required
+                                placeholder="Enter rank"
+                                className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                              />
+                            </label>
+                          ) : null
+                        }
+                        allLabel="Select Rank"
                         disabled={loadingOptions}
-                        className="w-full rounded-xl sm:rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <option value="">
-                          {loadingOptions ? "Loading ranks..." : "Select Rank"}
-                        </option>
-                        {rankOptions.map((rank) => (
-                          <option key={rank.RANK_ID} value={rank.RANK_ID}>
-                            {rank.RANK_NAME}
-                          </option>
-                        ))}
-                      </select>
+                        loading={loadingOptions}
+                        loadingLabel="Loading ranks..."
+                        usePortal
+                        menuListClassName="max-h-48"
+                        buttonClassName="rounded-xl px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base"
+                      />
                     </div>
                   </div>
                 </div>
