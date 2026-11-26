@@ -947,7 +947,7 @@ export default function UserManagement() {
                         "others"
                           ? "OTHER"
                           : rank.RANK_ID,
-                      label: rank.RANK_NAME,
+                      label: rank.RANK_ABBREVIATION || rank.RANK_NAME,
                     }))}
                     placeholder={optionsLoading ? "Loading ranks..." : "Select Rank"}
                     allLabel="Select Rank"

@@ -755,10 +755,10 @@ const getDepartmentOptions = async () => {
 
 const getRankOptions = async () => {
   const [rows] = await db.execute(
-    `SELECT RANK_ID, RANK_NAME
+    `SELECT RANK_ID, RANK_NAME, RANK_ABBREVIATION
      FROM xxafmc_ranks
      WHERE IS_ACTIVE = 1
-     ORDER BY RANK_NAME ASC`
+     ORDER BY COALESCE(NULLIF(RANK_ABBREVIATION, ''), RANK_NAME) ASC`
   );
 
   return rows;

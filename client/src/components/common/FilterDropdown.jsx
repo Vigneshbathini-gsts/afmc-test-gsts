@@ -11,7 +11,6 @@ export default function FilterDropdown({
   placeholder = "Select",
   allLabel = "All",
   selectedLabel,
-  menuFooter,
   showSearch = true,
   disabled = false,
   loading = false,
@@ -230,10 +229,6 @@ export default function FilterDropdown({
           </div>
         </div>
       )}
-
-      {menuFooter ? (
-        <div className="border-b border-gray-100 p-3">{menuFooter}</div>
-      ) : null}
 
       <div
         className={`${

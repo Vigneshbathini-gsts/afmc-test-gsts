@@ -95,6 +95,8 @@ export default function UserEdit() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [isEditingOtherDepartment, setIsEditingOtherDepartment] = useState(false);
+  const [isEditingOtherRank, setIsEditingOtherRank] = useState(false);
 
   const departmentSelection = getOptionSelection(
     formData.departmentId,
@@ -114,6 +116,8 @@ export default function UserEdit() {
       try {
         setLoading(true);
         setError("");
+        setIsEditingOtherDepartment(false);
+        setIsEditingOtherRank(false);
 
         const response = await userAPI.getById(id);
         const user = response.data?.data;
@@ -228,6 +232,16 @@ export default function UserEdit() {
         ? { [customField]: "" }
         : {}),
     }));
+  };
+
+  const handleOptionSelection = (name, value) => {
+    if (name === "departmentId") {
+      setIsEditingOtherDepartment(value === "OTHER");
+    } else if (name === "rankId") {
+      setIsEditingOtherRank(value === "OTHER");
+    }
+
+    handleChange({ target: { name, value } });
   };
 
   const handleSave = async (event) => {
@@ -453,9 +467,7 @@ export default function UserEdit() {
                         id="departmentId"
                         value={departmentSelection}
                         onChange={(value) =>
-                          handleChange({
-                            target: { name: "departmentId", value },
-                          })
+                          handleOptionSelection("departmentId", value)
                         }
                         options={departmentOptions.map((department) => ({
                           value:
@@ -470,27 +482,11 @@ export default function UserEdit() {
                           loadingOptions ? "Loading departments..." : "Select Department"
                         }
                         selectedLabel={
-                          departmentSelection === "OTHER"
-                            ? formData.otherDepartment || "Others"
+                          departmentSelection === "OTHER" &&
+                          !isEditingOtherDepartment &&
+                          formData.otherDepartment
+                            ? formData.otherDepartment
                             : undefined
-                        }
-                        menuFooter={
-                          departmentSelection === "OTHER" ? (
-                            <label className="block text-xs font-medium text-gray-600">
-                              Custom department
-                              <input
-                                type="text"
-                                id="otherDepartment"
-                                name="otherDepartment"
-                                value={formData.otherDepartment}
-                                onChange={handleChange}
-                                maxLength={255}
-                                required
-                                placeholder="Enter department"
-                                className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                              />
-                            </label>
-                          ) : null
                         }
                         allLabel="Select Department"
                         disabled={loadingOptions}
@@ -500,6 +496,20 @@ export default function UserEdit() {
                         menuListClassName="max-h-48"
                         buttonClassName="rounded-xl px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base"
                       />
+                      {departmentSelection === "OTHER" &&
+                        isEditingOtherDepartment && (
+                          <input
+                            type="text"
+                            id="otherDepartment"
+                            name="otherDepartment"
+                            value={formData.otherDepartment}
+                            onChange={handleChange}
+                            maxLength={255}
+                            required
+                            placeholder="Enter department"
+                            className="mt-2 w-full rounded-xl sm:rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                          />
+                        )}
                     </div>
 
                     <div>
@@ -512,40 +522,22 @@ export default function UserEdit() {
                       <FilterDropdown
                         id="rankId"
                         value={rankSelection}
-                        onChange={(value) =>
-                          handleChange({ target: { name: "rankId", value } })
-                        }
+                        onChange={(value) => handleOptionSelection("rankId", value)}
                         options={rankOptions.map((rank) => ({
                           value:
                             String(rank.RANK_NAME || "").trim().toLowerCase() ===
                             "others"
                               ? "OTHER"
                               : rank.RANK_ID,
-                          label: rank.RANK_NAME,
+                          label: rank.RANK_ABBREVIATION || rank.RANK_NAME,
                         }))}
                         placeholder={loadingOptions ? "Loading ranks..." : "Select Rank"}
                         selectedLabel={
-                          rankSelection === "OTHER"
-                            ? formData.otherRank || "Others"
+                          rankSelection === "OTHER" &&
+                          !isEditingOtherRank &&
+                          formData.otherRank
+                            ? formData.otherRank
                             : undefined
-                        }
-                        menuFooter={
-                          rankSelection === "OTHER" ? (
-                            <label className="block text-xs font-medium text-gray-600">
-                              Custom rank
-                              <input
-                                type="text"
-                                id="otherRank"
-                                name="otherRank"
-                                value={formData.otherRank}
-                                onChange={handleChange}
-                                maxLength={255}
-                                required
-                                placeholder="Enter rank"
-                                className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                              />
-                            </label>
-                          ) : null
                         }
                         allLabel="Select Rank"
                         disabled={loadingOptions}
@@ -555,6 +547,19 @@ export default function UserEdit() {
                         menuListClassName="max-h-48"
                         buttonClassName="rounded-xl px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base"
                       />
+                      {rankSelection === "OTHER" && isEditingOtherRank && (
+                        <input
+                          type="text"
+                          id="otherRank"
+                          name="otherRank"
+                          value={formData.otherRank}
+                          onChange={handleChange}
+                          maxLength={255}
+                          required
+                          placeholder="Enter rank"
+                          className="mt-2 w-full rounded-xl sm:rounded-2xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                        />
+                      )}
                     </div>
                   </div>
                 </div>
