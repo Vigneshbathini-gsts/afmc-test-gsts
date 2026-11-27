@@ -114,12 +114,9 @@ const normalizeDropdownOptions = (options) => {
 const REPORT_PAGE_SIZE = 20;
 const TRANSACTION_TABLE_COLUMNS = [
   { key: "orderNumber", label: "Order Number" },
-  { key: "user", label: "User" },
-  { key: "kitchen", label: "Kitchen" },
   { key: "itemName", label: "Item Name" },
   { key: "type", label: "Type" },
   { key: "quantity", label: "Quantity" },
-  { key: "profitPercent", label: "Profit %" },
   { key: "totalProfit", label: "Total Profit(Amount)" },
   { key: "prepCharges", label: "Preparation Charges" },
   { key: "subtotal", label: "Subtotal" },
@@ -451,12 +448,9 @@ export default function OrderTransactionUI() {
 
   const getTransactionExportValues = (row) => ({
     orderNumber: row.ORDER_NUM || "-",
-    user: row.FIRST_NAME || "-",
-    kitchen: row.PUBMED_NAME || "-",
     itemName: toInitCap(stripHtml(row.ITEM_NAME) || "-"),
     type: row.TYPE || row.type || "NA",
     quantity: row.QUANTITY || "-",
-    profitPercent: row.TOTALPERCENT || "0.00",
     totalProfit: isFreeItem(row)
       ? "Free Item"
       : row.TOTAL_PROFIT || "0.00",
@@ -966,12 +960,9 @@ export default function OrderTransactionUI() {
         ...exportRows.map(getTransactionExportValues),
         {
           orderNumber: "",
-          user: "",
-          kitchen: "",
           itemName: "",
           type: "",
           quantity: "TOTAL",
-          profitPercent: "",
           totalProfit: totals.totalProfit.toFixed(2),
           prepCharges: totals.prepCharges.toFixed(2),
           subtotal: totals.subtotal.toFixed(2),
@@ -1027,12 +1018,9 @@ export default function OrderTransactionUI() {
           ...exportRows.map(getTransactionExportValues),
           {
             orderNumber: "",
-            user: "",
-            kitchen: "",
             itemName: "",
             type: "",
             quantity: "TOTAL",
-            profitPercent: "",
             totalProfit: totals.totalProfit.toFixed(2),
             prepCharges: totals.prepCharges.toFixed(2),
             subtotal: totals.subtotal.toFixed(2),
@@ -1401,14 +1389,6 @@ export default function OrderTransactionUI() {
                           Order Number
                         </th>}
 
-                        {isColumnVisible("user") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                          User
-                        </th>}
-
-                        {isColumnVisible("kitchen") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                          Kitchen
-                        </th>}
-
                         {isColumnVisible("itemName") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                           Item Name
                         </th>}
@@ -1419,10 +1399,6 @@ export default function OrderTransactionUI() {
 
                         {isColumnVisible("quantity") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                           Quantity
-                        </th>}
-
-                        {isColumnVisible("profitPercent") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                          Profit %
                         </th>}
 
                         {isColumnVisible("totalProfit") && <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
@@ -1488,14 +1464,6 @@ export default function OrderTransactionUI() {
                                     "-"}
                                 </td>}
 
-                                {isColumnVisible("user") && <td className="px-4 py-3 whitespace-nowrap">
-                                  {row.FIRST_NAME || "-"}
-                                </td>}
-
-                                {isColumnVisible("kitchen") && <td className="px-4 py-3 whitespace-nowrap">
-                                  {row.PUBMED_NAME || "-"}
-                                </td>}
-
                                 {isColumnVisible("itemName") && <td className="px-4 py-3 whitespace-nowrap">
                                   {toInitCap(
                                     stripHtml(
@@ -1514,10 +1482,6 @@ export default function OrderTransactionUI() {
                                 {isColumnVisible("quantity") && <td className="px-4 py-3 whitespace-nowrap">
                                   {row.QUANTITY ||
                                     "-"}
-                                </td>}
-
-                                {isColumnVisible("profitPercent") && <td className="px-4 py-3 whitespace-nowrap">
-                                  {row.TOTALPERCENT || "0.00"}
                                 </td>}
 
                                 {isColumnVisible("totalProfit") && <td className="px-4 py-3 whitespace-nowrap">
@@ -1550,10 +1514,6 @@ export default function OrderTransactionUI() {
                           <tr className="border-t border-gray-200 bg-gray-100 font-semibold">
                             {isColumnVisible("orderNumber") && <td className="px-4 py-3 whitespace-nowrap" />}
 
-                            {isColumnVisible("user") && <td className="px-4 py-3 whitespace-nowrap" />}
-
-                            {isColumnVisible("kitchen") && <td className="px-4 py-3 whitespace-nowrap" />}
-
                             {isColumnVisible("itemName") && <td className="px-4 py-3 whitespace-nowrap">
                               TOTAL
                             </td>}
@@ -1561,8 +1521,6 @@ export default function OrderTransactionUI() {
                             {isColumnVisible("type") && <td className="px-4 py-3 whitespace-nowrap" />}
 
                             {isColumnVisible("quantity") && <td className="px-4 py-3 whitespace-nowrap" />}
-
-                            {isColumnVisible("profitPercent") && <td className="px-4 py-3 whitespace-nowrap" />}
 
                             {isColumnVisible("totalProfit") && <td className="px-4 py-3 whitespace-nowrap">
                               {formatMoney(

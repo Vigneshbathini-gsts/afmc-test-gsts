@@ -106,7 +106,7 @@ const validateCreatePayload = (payload) => {
     payload.departmentId,
     payload.departmentIsOther,
     payload.otherDepartment,
-    true
+    false
   );
   if (departmentError) return departmentError;
 
@@ -115,7 +115,7 @@ const validateCreatePayload = (payload) => {
     payload.rankId,
     payload.rankIsOther,
     payload.otherRank,
-    true
+    false
   );
   if (rankError) return rankError;
 

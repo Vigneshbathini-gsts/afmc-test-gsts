@@ -43,13 +43,31 @@ const STOCK_REPORT_COLUMNS = [
   { key: "totalPrice", label: "Total Price" },
 ];
 
+const compareTimestampsDescending = (left, right) => {
+  const leftTimestamp = Date.parse(left || "");
+  const rightTimestamp = Date.parse(right || "");
+  const leftIsValid = Number.isFinite(leftTimestamp);
+  const rightIsValid = Number.isFinite(rightTimestamp);
+  if (leftIsValid !== rightIsValid) return rightIsValid ? 1 : -1;
+  return leftIsValid ? rightTimestamp - leftTimestamp : 0;
+};
+
+const compareBarcodeDetailsByLatestDate = (left, right) =>
+  compareTimestampsDescending(
+    left?.date || left?.created_at,
+    right?.date || right?.created_at
+  ) || compareTimestampsDescending(left?.created_at, right?.created_at);
+
+const sortBarcodeDetails = (details) =>
+  [...details].filter((entry) => entry?.barcode).sort(compareBarcodeDetailsByLatestDate);
+
 const getBarcodeDetails = (item) => {
   const raw = item?.barcode_details ?? item?.BARCODE_DETAILS;
-  if (Array.isArray(raw)) return raw.filter((entry) => entry?.barcode);
+  if (Array.isArray(raw)) return sortBarcodeDetails(raw);
   if (typeof raw === "string") {
     try {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed.filter((entry) => entry?.barcode);
+      if (Array.isArray(parsed)) return sortBarcodeDetails(parsed);
     } catch (_) {
       // Use the legacy barcode list if detailed data is unavailable.
     }

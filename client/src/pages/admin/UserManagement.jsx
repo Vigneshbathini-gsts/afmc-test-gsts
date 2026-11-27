@@ -47,6 +47,11 @@ const INITIAL_FORM = {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^\d{10}$/;
+const sortOtherOptionLast = (options) =>
+  [...options].sort(
+    (left, right) =>
+      Number(left.value === "OTHER") - Number(right.value === "OTHER")
+  );
 
 const USER_TABLE_COLUMNS = [
   { key: "userName", label: "User Name" },
@@ -54,6 +59,31 @@ const USER_TABLE_COLUMNS = [
   { key: "role", label: "Role" },
   { key: "loginType", label: "Login Type" },
 ];
+
+// Inline "required" messages shown under a field after it is touched
+const REQUIRED_MESSAGES = {
+  firstName: "First name is required.",
+  lastName: "Last name is required.",
+  userName: "User name is required.",
+  email: "Email is required.",
+  password: "Password is required.",
+  confirmPassword: "Confirm password is required.",
+  phoneNumber: "Phone number is required.",
+  otherDepartment: "Department is required.",
+  otherRank: "Rank is required.",
+};
+
+const INPUT_BASE =
+  "w-full rounded-2xl border bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20";
+
+function FieldError({ id, message }) {
+  if (!message) return null;
+  return (
+    <p id={id} role="alert" className="mt-1 text-xs font-medium text-red-600">
+      {message}
+    </p>
+  );
+}
 
 const validateCreateForm = (formData) => {
   if (!formData.firstName.trim()) return "First name is required.";
@@ -75,13 +105,11 @@ const validateCreateForm = (formData) => {
   if (!formData.phoneNumber.trim()) return "Phone number is required.";
   if (!PHONE_REGEX.test(formData.phoneNumber.trim()))
     return "Phone number must be exactly 10 digits.";
-  if (!formData.department) return "Department is required.";
   if (formData.department === "OTHER" && !formData.otherDepartment.trim()) {
-    return "Enter the department name.";
+    return "Department is required.";
   }
-  if (!formData.rank) return "Rank is required.";
   if (formData.rank === "OTHER" && !formData.otherRank.trim()) {
-    return "Enter the rank.";
+    return "Rank is required.";
   }
   return "";
 };
@@ -102,6 +130,7 @@ export default function UserManagement() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
   const [formData, setFormData] = useState(INITIAL_FORM);
+  const [touched, setTouched] = useState({}); // fields the user has left at least once
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
   const [saving, setSaving] = useState(false);
@@ -260,6 +289,7 @@ export default function UserManagement() {
   // ---------- Form helpers ----------
   const resetForm = () => {
     setFormData(INITIAL_FORM);
+    setTouched({});
     setFormError("");
     setFormSuccess("");
   };
@@ -313,10 +343,54 @@ export default function UserManagement() {
     }));
   };
 
+  // Mark a field as touched when the user leaves it
+  const handleBlur = (event) => {
+    const { name } = event.target;
+    setTouched((prev) => (prev[name] ? prev : { ...prev, [name]: true }));
+  };
+
+  // Inline error for a required field (only after it has been touched)
+  const getFieldError = (name) => {
+    if (!touched[name]) return "";
+    return String(formData[name] ?? "").trim() ? "" : REQUIRED_MESSAGES[name] || "";
+  };
+
+  // Input classes: red border when the field shows an error
+  const inputClass = (name, extra = "") =>
+    `${INPUT_BASE} ${
+      getFieldError(name) ? "border-red-400" : "border-gray-200"
+    } ${extra}`.trim();
+
   const handleCreateUser = async (event) => {
     event.preventDefault();
+    const form = event.currentTarget;
     setFormError("");
     setFormSuccess("");
+
+    // Required-field check: show all inline errors and focus the first empty one
+    const requiredFields = [
+      "firstName",
+      "lastName",
+      "userName",
+      "email",
+      "password",
+      "confirmPassword",
+      "phoneNumber",
+      ...(formData.department === "OTHER" ? ["otherDepartment"] : []),
+      ...(formData.rank === "OTHER" ? ["otherRank"] : []),
+    ];
+    const firstEmpty = requiredFields.find(
+      (name) => !String(formData[name] ?? "").trim()
+    );
+    if (firstEmpty) {
+      setTouched((prev) => ({
+        ...prev,
+        ...Object.fromEntries(requiredFields.map((name) => [name, true])),
+      }));
+      setFormError("Please fill in all required fields.");
+      form.elements[firstEmpty]?.focus();
+      return;
+    }
 
     const validationMessage = validateCreateForm(formData);
     if (validationMessage) {
@@ -801,12 +875,13 @@ export default function UserManagement() {
               onSubmit={handleCreateUser}
               className="relative"
               autoComplete="off"
+              noValidate
             >
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
                 {/* Login Type */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Login Type
+                    Login Type <span className="text-red-500">*</span>
                   </label>
                   <FilterDropdown
                     id="loginType"
@@ -832,50 +907,65 @@ export default function UserManagement() {
                 {/* First Name */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    First Name
+                    First Name <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
                     name="firstName"
                     value={formData.firstName}
                     onChange={handleFormChange}
+                    onBlur={handleBlur}
+                    required
+                    aria-invalid={!!getFieldError("firstName")}
+                    aria-describedby="firstName-error"
                     maxLength={25}
                     placeholder="Enter first name"
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                    className={inputClass("firstName")}
                   />
+                  <FieldError id="firstName-error" message={getFieldError("firstName")} />
                 </div>
 
                 {/* Last Name */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Last Name
+                    Last Name <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
                     name="lastName"
                     value={formData.lastName}
                     onChange={handleFormChange}
+                    onBlur={handleBlur}
+                    required
+                    aria-invalid={!!getFieldError("lastName")}
+                    aria-describedby="lastName-error"
                     maxLength={25}
                     placeholder="Enter last name"
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                    className={inputClass("lastName")}
                   />
+                  <FieldError id="lastName-error" message={getFieldError("lastName")} />
                 </div>
 
                 {/* User Name */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    User Name
+                    User Name <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="email"
                     name="userName"
                     value={formData.userName}
                     onChange={handleFormChange}
+                    onBlur={handleBlur}
+                    required
+                    aria-invalid={!!getFieldError("userName")}
+                    aria-describedby="userName-error"
                     autoComplete="off"
                     maxLength={100}
                     placeholder="Enter username same as email"
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                    className={inputClass("userName")}
                   />
+                  <FieldError id="userName-error" message={getFieldError("userName")} />
                 </div>
 
                 {/* ========== DEPARTMENT ========== */}
@@ -884,7 +974,7 @@ export default function UserManagement() {
                     htmlFor="department"
                     className="mb-1 block text-sm font-medium text-gray-700"
                   >
-                    Department <span className="text-red-500">*</span>
+                    Department
                   </label>
                   <FilterDropdown
                     id="department"
@@ -894,14 +984,14 @@ export default function UserManagement() {
                         target: { name: "department", value },
                       })
                     }
-                    options={departmentOptions.map((dept) => ({
+                    options={sortOtherOptionLast(departmentOptions.map((dept) => ({
                       value:
                         String(dept.DEPARTMENT_NAME || "").trim().toLowerCase() ===
                         "others"
                           ? "OTHER"
                           : dept.DEPARTMENT_ID,
                       label: dept.DEPARTMENT_NAME,
-                    }))}
+                    })))}
                     placeholder={
                       optionsLoading ? "Loading departments..." : "Select Department"
                     }
@@ -914,16 +1004,29 @@ export default function UserManagement() {
                     buttonClassName="rounded-2xl px-4 py-2 text-sm"
                   />
                   {formData.department === "OTHER" && (
-                    <input
-                      type="text"
-                      name="otherDepartment"
-                      value={formData.otherDepartment}
-                      onChange={handleFormChange}
-                      maxLength={255}
-                      required
-                      placeholder="Enter department"
-                      className="mt-2 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                    />
+                    <div className="mt-2">
+                      <label htmlFor="otherDepartment" className="mb-1 block text-sm font-medium text-gray-700">
+                        Other Department <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        id="otherDepartment"
+                        type="text"
+                        name="otherDepartment"
+                        value={formData.otherDepartment}
+                        onChange={handleFormChange}
+                        onBlur={handleBlur}
+                        required
+                        aria-invalid={!!getFieldError("otherDepartment")}
+                        aria-describedby="otherDepartment-error"
+                        maxLength={255}
+                        placeholder="Enter department"
+                        className={inputClass("otherDepartment")}
+                      />
+                      <FieldError
+                        id="otherDepartment-error"
+                        message={getFieldError("otherDepartment")}
+                      />
+                    </div>
                   )}
                 </div>
 
@@ -933,7 +1036,7 @@ export default function UserManagement() {
                     htmlFor="rank"
                     className="mb-1 block text-sm font-medium text-gray-700"
                   >
-                    Rank <span className="text-red-500">*</span>
+                    Rank
                   </label>
                   <FilterDropdown
                     id="rank"
@@ -941,14 +1044,14 @@ export default function UserManagement() {
                     onChange={(value) =>
                       handleFormChange({ target: { name: "rank", value } })
                     }
-                    options={rankOptions.map((rank) => ({
+                    options={sortOtherOptionLast(rankOptions.map((rank) => ({
                       value:
                         String(rank.RANK_NAME || "").trim().toLowerCase() ===
                         "others"
                           ? "OTHER"
                           : rank.RANK_ID,
                       label: rank.RANK_ABBREVIATION || rank.RANK_NAME,
-                    }))}
+                    })))}
                     placeholder={optionsLoading ? "Loading ranks..." : "Select Rank"}
                     allLabel="Select Rank"
                     disabled={optionsLoading}
@@ -959,40 +1062,55 @@ export default function UserManagement() {
                     buttonClassName="rounded-2xl px-4 py-2 text-sm"
                   />
                   {formData.rank === "OTHER" && (
-                    <input
-                      type="text"
-                      name="otherRank"
-                      value={formData.otherRank}
-                      onChange={handleFormChange}
-                      maxLength={255}
-                      required
-                      placeholder="Enter rank"
-                      className="mt-2 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
-                    />
+                    <div className="mt-2">
+                      <label htmlFor="otherRank" className="mb-1 block text-sm font-medium text-gray-700">
+                        Other Rank <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        id="otherRank"
+                        type="text"
+                        name="otherRank"
+                        value={formData.otherRank}
+                        onChange={handleFormChange}
+                        onBlur={handleBlur}
+                        required
+                        aria-invalid={!!getFieldError("otherRank")}
+                        aria-describedby="otherRank-error"
+                        maxLength={255}
+                        placeholder="Enter rank"
+                        className={inputClass("otherRank")}
+                      />
+                      <FieldError id="otherRank-error" message={getFieldError("otherRank")} />
+                    </div>
                   )}
                 </div>
 
                 {/* Email */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Email
+                    Email <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="email"
                     name="email"
                     value={formData.email}
                     onChange={handleFormChange}
+                    onBlur={handleBlur}
+                    required
+                    aria-invalid={!!getFieldError("email")}
+                    aria-describedby="email-error"
                     autoComplete="off"
                     maxLength={100}
                     placeholder="Enter email"
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                    className={inputClass("email")}
                   />
+                  <FieldError id="email-error" message={getFieldError("email")} />
                 </div>
 
                 {/* Password */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Password
+                    Password <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
                     <input
@@ -1000,11 +1118,15 @@ export default function UserManagement() {
                       name="password"
                       value={formData.password}
                       onChange={handleFormChange}
+                      onBlur={handleBlur}
+                      required
+                      aria-invalid={!!getFieldError("password")}
+                      aria-describedby="password-error"
                       autoComplete="new-password"
                       minLength={6}
                       maxLength={72}
                       placeholder="Enter password"
-                      className="password-field w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 pr-10 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                      className={inputClass("password", "password-field pr-10")}
                     />
                     <button
                       type="button"
@@ -1017,12 +1139,13 @@ export default function UserManagement() {
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
+                  <FieldError id="password-error" message={getFieldError("password")} />
                 </div>
 
                 {/* Confirm Password */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Confirm Password
+                    Confirm Password <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
                     <input
@@ -1030,11 +1153,15 @@ export default function UserManagement() {
                       name="confirmPassword"
                       value={formData.confirmPassword}
                       onChange={handleFormChange}
+                      onBlur={handleBlur}
+                      required
+                      aria-invalid={!!getFieldError("confirmPassword")}
+                      aria-describedby="confirmPassword-error"
                       autoComplete="new-password"
                       minLength={6}
                       maxLength={72}
                       placeholder="Re-enter password"
-                      className="password-field w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 pr-10 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                      className={inputClass("confirmPassword", "password-field pr-10")}
                     />
                     <button
                       type="button"
@@ -1053,24 +1180,33 @@ export default function UserManagement() {
                       )}
                     </button>
                   </div>
+                  <FieldError
+                    id="confirmPassword-error"
+                    message={getFieldError("confirmPassword")}
+                  />
                 </div>
 
                 {/* Phone Number */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Phone Number
+                    Phone Number <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="tel"
                     name="phoneNumber"
                     value={formData.phoneNumber}
                     onChange={handleFormChange}
+                    onBlur={handleBlur}
+                    required
+                    aria-invalid={!!getFieldError("phoneNumber")}
+                    aria-describedby="phoneNumber-error"
                     inputMode="numeric"
                     pattern="\d{10}"
                     maxLength={10}
                     placeholder="Enter 10-digit phone number"
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-800 outline-none transition focus:border-afmc-maroon2 focus:ring-2 focus:ring-afmc-maroon2/20"
+                    className={inputClass("phoneNumber")}
                   />
+                  <FieldError id="phoneNumber-error" message={getFieldError("phoneNumber")} />
                 </div>
               </div>
 
