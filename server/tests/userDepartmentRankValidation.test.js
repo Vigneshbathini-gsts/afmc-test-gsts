@@ -56,22 +56,16 @@ const validUpdatePayload = {
   phoneNumber: "1234567890",
 };
 
-test("user creation requires department and rank", async () => {
-  const departmentResponse = createResponse();
+test("user creation allows department and rank to be omitted", async () => {
+  createdUserPayload = null;
+  const response = createResponse();
   await userController.createUser(
-    { body: { ...validCreatePayload, rankId: 1 } },
-    departmentResponse
+    { body: validCreatePayload },
+    response
   );
-  assert.equal(departmentResponse.statusCode, 400);
-  assert.equal(departmentResponse.payload.message, "Department is required");
-
-  const rankResponse = createResponse();
-  await userController.createUser(
-    { body: { ...validCreatePayload, departmentId: 1 } },
-    rankResponse
-  );
-  assert.equal(rankResponse.statusCode, 400);
-  assert.equal(rankResponse.payload.message, "Rank is required");
+  assert.equal(response.statusCode, 201);
+  assert.equal(createdUserPayload.departmentId, null);
+  assert.equal(createdUserPayload.rankId, null);
 });
 
 test("user creation accepts custom department and rank values", async () => {

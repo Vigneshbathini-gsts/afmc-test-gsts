@@ -307,12 +307,16 @@ const createUser = async ({
 
   try {
     await connection.beginTransaction();
-    await validateUserOptionIds(connection, {
-      departmentId,
-      rankId,
-      otherDepartment,
-      otherRank,
-    });
+    await validateUserOptionIds(
+      connection,
+      {
+        departmentId,
+        rankId,
+        otherDepartment,
+        otherRank,
+      },
+      { required: false }
+    );
 
     const [existingUsers] = await connection.execute(
       `
