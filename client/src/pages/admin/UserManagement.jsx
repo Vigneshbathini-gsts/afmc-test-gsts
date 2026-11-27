@@ -387,7 +387,9 @@ export default function UserManagement() {
         ...prev,
         ...Object.fromEntries(requiredFields.map((name) => [name, true])),
       }));
-      setFormError("Please fill in all required fields.");
+      toast.error("Please fill in all required fields.", {
+        toastId: "required-fields", // prevents duplicate toasts on repeated clicks
+      });
       form.elements[firstEmpty]?.focus();
       return;
     }
